@@ -1,0 +1,260 @@
+version: "1.0"
+
+defaults:
+  mode: "dry-run"
+  redaction_profile: "ai-share"
+  recursive: true
+  jobs: 1
+  save_map: false
+  mask_in_reports: true
+  overwrite_originals: false
+  max_file_size_mb: 200
+  max_pdf_pages: 500
+
+input:
+  file_types:
+    # .txt is enabled only for detector validation in v0.3.
+    # It is not a formal real-project support commitment.
+    - ".txt"
+    - ".docx"
+    - ".xlsx"
+    - ".pdf"
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+  skip_output_directories: true
+  skip_hidden_directories: true
+  skip_symlinks: true
+
+redaction:
+  placeholder_style: "cn_bracket"
+  maintain_consistent_placeholders: true
+  output_suffix: "_脱敏版"
+  pdf_redaction_mode: "image_based_visual_copy_only"
+  pdf_redaction_color: "black"
+  image_redaction_color: "black"
+  never_overlay_pdf_only: true
+
+reports:
+  summary_json: true
+  redaction_report_json: true
+  visual_redaction_report_json: true
+  preview_grid_report_json: true
+  grid_regions_report_json: true
+  ocr_precheck_report_json: true
+  docx_candidate_report_json: true
+  region_selector_report_json: true
+  image_visual_redaction_report_json: true
+  guided_workflow_report_json: true
+  file_index_local_json: true
+  mask_in_reports: true
+  include_raw_values: false
+  include_original_filenames: false
+  include_original_paths: false
+  include_path_hash_in_summary: false
+  include_precise_size_in_summary: false
+  include_original_absolute_path_in_file_index: false
+  include_manual_review_list: true
+
+enabled_detectors:
+  phone: true
+  id_card: true
+  email: true
+  unified_social_credit_code: true
+  bank_account: true
+  license_plate: true
+  url: true
+  contract_number: true
+  case_number: true
+  custom_terms: true
+
+custom_terms:
+  companies: []
+  company_aliases: []
+  persons: []
+  projects: []
+  clients: []
+  counterparties: []
+  institutions: []
+  meeting_locations: []
+  other_locations: []
+  template_years: []
+  template_dates: []
+  headcounts: []
+  share_counts: []
+  vote_counts: []
+  ownership_ratios: []
+  service_fees: []
+  other_amounts: []
+  service_terms: []
+  fund_manager_registration_numbers: []
+  registration_numbers: []
+  lawyer_phones: []
+  phones: []
+  emails: []
+  identity_numbers: []
+  addresses: []
+  other_terms: []
+
+review_rules:
+  flag_scanned_pdf: true
+  flag_text_pdf_redaction_verification: true
+  flag_encrypted_files: true
+  flag_large_files: true
+  flag_unsupported_file_types: true
+  flag_local_ocr_dependency_unavailable: true
+  flag_low_ocr_confidence: true
+  flag_docx_comments: true
+  flag_docx_revisions: true
+  flag_docx_headers_footers: true
+  flag_docx_text_boxes: true
+  flag_docx_embedded_images: true
+  flag_xlsx_hidden_sheets: true
+  flag_xlsx_formulas: true
+  flag_xlsx_comments: true
+  flag_xlsx_hyperlinks: true
+  flag_pdf_visual_redaction_manual_review: true
+  flag_pdf_preview_grid_manual_review: true
+  flag_pdf_preview_grid_local_sensitive_output: true
+  flag_pdf_grid_regions_manual_review: true
+  flag_pdf_grid_regions_local_sensitive_output: true
+  flag_pdf_no_regions: true
+  flag_pdf_invalid_regions: true
+
+pdf_visual_redaction:
+  mode: "manual_regions_image_based_pdf"
+  render_dpi: 200
+  redaction_padding_ratio: 0.004
+  regions_config_filename: "pdf_redaction_regions.local.json"
+  output_suffix: "_视觉脱敏版"
+  output_type: "image_based_pdf"
+  no_ocr: true
+  no_auto_detection: true
+  no_true_pdf_redaction: true
+  never_overlay_pdf_only: true
+
+pdf_preview_grid:
+  mode: "preview_grid_only"
+  preview_dpi: 120
+  grid_columns: 12
+  grid_rows: 18
+  output_directory: "previews"
+  regions_template_filename: "pdf_redaction_regions.local.template.json"
+  coordinate_guide_filename: "preview_grid_coordinate_guide.md"
+  no_ocr: true
+  no_auto_detection: true
+  no_true_pdf_redaction: true
+  no_redacted_pdf_output: true
+  local_sensitive_preview_output: true
+
+pdf_grid_regions:
+  mode: "grid_regions_to_json_only"
+  regions_template_filename: "pdf_redaction_regions.local.template.json"
+  regions_output_filename: "pdf_redaction_regions.local.json"
+  label_pattern: "^[A-Za-z0-9_.-]+$"
+  overwrite_regions_default: false
+  no_pdf_read: true
+  no_preview_read: true
+  no_ocr: true
+  no_auto_detection: true
+  no_true_pdf_redaction: true
+  no_redacted_pdf_output: true
+  report_coordinates: false
+  report_grid_region_args: false
+  report_labels: false
+  local_sensitive_regions_output: true
+
+docx_candidate_precheck:
+  mode: "local_context_candidates_only"
+  candidate_terms_filename: "docx_candidate_terms.local.json"
+  candidate_types:
+    - "persons"
+    - "companies"
+    - "company_aliases"
+    - "projects"
+    - "meeting_locations"
+    - "other_locations"
+    - "template_years"
+    - "template_dates"
+    - "headcounts"
+    - "share_counts"
+    - "vote_counts"
+    - "ownership_ratios"
+    - "service_fees"
+    - "other_amounts"
+    - "service_terms"
+    - "fund_manager_registration_numbers"
+    - "registration_numbers"
+    - "lawyer_phones"
+    - "phones"
+    - "emails"
+    - "identity_numbers"
+    - "addresses"
+  auto_apply_redaction: false
+  manual_lawyer_confirmation_required: true
+  report_candidate_values: false
+
+region_selector:
+  mode: "loopback_browser_manual_selection"
+  bind_host: "127.0.0.1"
+  random_token_required: true
+  default_timeout_seconds: 1800
+  persist_preview_images: false
+  no_ocr: true
+  no_auto_detection: true
+  no_redacted_output: true
+  manual_selection_required: true
+
+guided_redaction:
+  mode: "single_file_browser_confirmed"
+  docx_candidate_review_in_browser: true
+  docx_terms_persisted: false
+  pdf_image_save_then_confirm_generation: true
+  default_output_directory: "_redaction_output"
+  no_ocr: true
+  no_auto_detection: true
+  no_true_pdf_redaction: true
+  no_batch_processing: true
+  profiles:
+    - "ai-share"
+    - "legal-template"
+  legal_template_confirmed_terms_only: true
+
+docx_compatibility:
+  document_xml_update: "minimal_w_t_text_patches_only"
+  metadata_update: "docprops_parts_only"
+  validate_all_xml_and_relationship_targets: true
+  reject_copy_if_ooxml_validation_fails: true
+  word_repair_required_must_not_be_success: true
+
+image_visual_redaction:
+  mode: "manual_regions_metadata_free_png"
+  regions_config_filename: "image_redaction_regions.local.json"
+  output_suffix: "_视觉脱敏版"
+  output_type: "metadata_free_png"
+  no_ocr: true
+  no_auto_detection: true
+  no_pdf_output: true
+  manual_review_required: true
+
+ocr_precheck:
+  engine: "tesseract_local"
+  languages: "chi_sim+eng"
+  render_dpi: 200
+  page_segmentation_mode: 3
+  min_confidence: 60
+  max_pages_per_file: 50
+  timeout_seconds_per_page: 120
+  direct_directory_scan_only: true
+  candidate_regions_filename: "ocr_candidate_regions.local.json"
+  persist_ocr_text: false
+  cloud_ocr: false
+  auto_create_redacted_pdf: false
+  manual_confirmation_required: true
+
+logging:
+  enabled: true
+  log_masked_values_only: true
+  log_raw_values: false
+  log_file_contents: false
+  log_original_paths: false

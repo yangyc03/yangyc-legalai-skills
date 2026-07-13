@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地脱敏区域选择</title>
+  <link rel="stylesheet" href="/assets/selector.css?token=__SELECTOR_TOKEN__">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL-ONLY</p>
+      <h1>脱敏区域选择</h1>
+    </div>
+    <div class="file-meta" id="file-meta" aria-live="polite"></div>
+  </header>
+  <main>
+    <section class="toolbar" aria-label="选择工具">
+      <button id="previous-page" type="button">上一页</button>
+      <span id="page-label">第 1 页</span>
+      <button id="next-page" type="button">下一页</button>
+      <label class="zoom-control">缩放
+        <select id="zoom-select">
+          <option value="0.75">75%</option>
+          <option value="1" selected>100%</option>
+          <option value="1.25">125%</option>
+          <option value="1.5">150%</option>
+        </select>
+      </label>
+      <span class="toolbar-spacer"></span>
+      <button id="undo-region" type="button">撤销本页</button>
+      <button id="clear-page" type="button">清空本页</button>
+      <button class="danger" id="cancel-selection" type="button">取消</button>
+      <button class="primary" id="save-selection" type="button">保存区域</button>
+      <button class="primary" id="confirm-generation" type="button" hidden>确认生成脱敏副本</button>
+    </section>
+    <p class="notice">仅在本机浏览器内拖动矩形框。保存区域不会生成副本；需要时请再单独确认生成。</p>
+    <section class="workspace">
+      <div class="canvas-shell" id="canvas-shell">
+        <div class="canvas-stage" id="canvas-stage">
+          <img id="page-image" alt="本地文件页面预览">
+          <canvas id="region-canvas"></canvas>
+        </div>
+      </div>
+      <aside class="selection-list" aria-label="已选区域">
+        <h2>已选区域</h2>
+        <p id="selection-count">0 个区域</p>
+        <ol id="regions"></ol>
+      </aside>
+    </section>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="/assets/selector.js?token=__SELECTOR_TOKEN__"></script>
+</body>
+</html>

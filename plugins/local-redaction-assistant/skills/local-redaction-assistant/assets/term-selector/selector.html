@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地 Word 脱敏确认</title>
+  <link rel="stylesheet" href="/assets/selector.css?token=__TERM_SELECTOR_TOKEN__">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL-ONLY</p>
+      <h1>Word 脱敏确认</h1>
+    </div>
+    <div class="file-meta" id="file-meta" aria-live="polite"></div>
+  </header>
+  <main>
+    <p class="notice">候选词只在本机浏览器会话中显示。请勾选需要替换的词，并补充遗漏内容；确认后才生成脱敏副本。</p>
+    <section class="warning" aria-label="人工复核提示">
+      候选结果可能遗漏或误判。文本框、字段代码、外部链接目标、宏和嵌入对象不自动改写；受支持范围仍须最终人工复核。
+    </section>
+    <section class="associations" id="candidate-associations" hidden aria-label="主体全称与简称候选"></section>
+    <section class="associations" id="table-actions" hidden aria-label="敏感表格处理"></section>
+    <div class="term-grid" id="term-grid"></div>
+    <section class="actions" aria-label="确认操作">
+      <button class="danger" id="cancel-selection" type="button">取消</button>
+      <button class="primary" id="confirm-selection" type="button">确认并生成脱敏副本</button>
+    </section>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="/assets/selector.js?token=__TERM_SELECTOR_TOKEN__"></script>
+</body>
+</html>

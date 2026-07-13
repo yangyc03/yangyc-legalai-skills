@@ -1,0 +1,29 @@
+{
+  "name": "local-redaction-assistant",
+  "version": "1.1.1-beta",
+  "description": "Local-only, browser-guided redaction for explicitly selected DOCX copies and manual PDF/image visual copies.",
+  "author": {
+    "name": "Yingchao Yang",
+    "url": "https://github.com/yangyc03"
+  },
+  "homepage": "https://github.com/yangyc03/yangyc-legalai-skills/tree/main/plugins/local-redaction-assistant",
+  "repository": "https://github.com/yangyc03/yangyc-legalai-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "redaction",
+    "docx",
+    "pdf",
+    "local-only",
+    "legal-workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Local Redaction Assistant",
+    "shortDescription": "Local-only document redaction",
+    "longDescription": "Run a local-only browser workflow for a lawyer-selected copy. The original file is not overwritten and the generated copy requires human review.",
+    "developerName": "Yingchao Yang",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/yangyc03/yangyc-legalai-skills"
+  }
+}

@@ -1,0 +1,31 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; color: #172033; background: #f4f6fa; }
+body { margin: 0; min-width: 320px; }
+.topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 20px 28px; background: #15213b; color: #fff; }
+.eyebrow { margin: 0 0 4px; font-size: 12px; letter-spacing: .08em; color: #a9bedb; }
+h1 { margin: 0; font-size: 24px; }
+.file-meta { color: #d8e3f3; font-weight: 600; }
+main { max-width: 980px; margin: 0 auto; padding: 24px; }
+.notice, .warning { margin: 0 0 16px; padding: 14px 16px; border-radius: 6px; line-height: 1.55; }
+.notice { background: #eaf2ff; color: #183d76; }
+.warning { background: #fff4dd; color: #6a4808; }
+.associations { margin: 0 0 16px; padding: 14px 16px; border: 1px solid #bfd0e8; border-radius: 6px; background: #f8fbff; }
+.associations h2 { margin: 0 0 8px; font-size: 17px; }
+.associations p { margin: 4px 0; overflow-wrap: anywhere; }
+.table-action-row { display: grid; gap: 8px; margin: 12px 0; }
+.table-action-row select { max-width: 560px; padding: 9px 10px; border: 1px solid #aeb9cc; border-radius: 4px; font: inherit; }
+.term-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.term-card { padding: 16px; background: #fff; border: 1px solid #d8deea; border-radius: 6px; box-shadow: 0 1px 2px rgba(12, 22, 44, .04); }
+.term-card h2 { margin: 0 0 10px; font-size: 18px; }
+.candidate-list { display: grid; gap: 8px; margin: 0 0 14px; max-height: 260px; overflow: auto; }
+.candidate-list label { display: flex; gap: 8px; align-items: flex-start; padding: 7px 8px; border-radius: 4px; background: #f7f9fc; overflow-wrap: anywhere; }
+.candidate-list .empty { color: #68758b; font-size: 14px; }
+.add-row { display: flex; gap: 8px; }
+.add-row input { min-width: 0; flex: 1; padding: 9px 10px; border: 1px solid #aeb9cc; border-radius: 4px; font: inherit; }
+button { min-height: 36px; padding: 8px 12px; border: 1px solid #8e99ab; border-radius: 4px; background: #fff; color: #172033; font: inherit; cursor: pointer; }
+button.primary { border-color: #0f5cc0; background: #1267d6; color: #fff; }
+button.danger { border-color: #bb2e36; color: #a21920; }
+button:disabled { cursor: wait; opacity: .65; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.status { min-height: 22px; margin: 16px 0 0; color: #234b24; }
+.status.error { color: #a21920; }
+@media (max-width: 620px) { .topbar { align-items: flex-start; flex-direction: column; } main { padding: 16px; } .actions { flex-direction: column-reverse; } .actions button { width: 100%; } }
