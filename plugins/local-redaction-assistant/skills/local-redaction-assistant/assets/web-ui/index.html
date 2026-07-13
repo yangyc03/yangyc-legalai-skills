@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地文件脱敏</title>
+  <link rel="stylesheet" href="/assets/app.css?token=__TOKEN__">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL-ONLY · 127.0.0.1</p>
+      <h1>本地文件脱敏</h1>
+    </div>
+    <span class="version" id="version"></span>
+  </header>
+
+  <main>
+    <section class="notice">
+      <strong>文件只在本机处理。</strong>
+      浏览器通过本机回环地址连接脱敏工具，不上传云端。原件不会被覆盖；生成文件仍需律师逐页人工复核。
+    </section>
+
+    <section class="panel" id="upload-panel">
+      <h2>选择待脱敏副本</h2>
+      <form id="upload-form">
+        <label class="file-picker">
+          <span>选择 DOCX、PDF 或图片</span>
+          <input id="file-input" name="file" type="file" accept=".docx,.pdf,.png,.jpg,.jpeg" required>
+        </label>
+        <p class="file-name" id="file-name">尚未选择文件</p>
+        <label class="field-label" for="profile">脱敏模式</label>
+        <select id="profile" name="profile">
+          <option value="ai-share">普通 AI 共享脱敏</option>
+          <option value="legal-template">法律模板提炼（需要 Word 原生验证）</option>
+        </select>
+        <button class="primary" type="submit" id="upload-button">开始载入</button>
+      </form>
+      <p class="hint">网页首版一次处理一份文件；请先选择副本，不要选择原件。</p>
+    </section>
+
+    <section class="panel hidden" id="cleaning-panel">
+      <h2>Word 清洁确认</h2>
+      <p id="cleaning-summary"></p>
+      <label class="check-row" id="revision-check-row">
+        <input type="checkbox" id="accept-revisions">
+        接受全部修订，并关闭继续跟踪
+      </label>
+      <label class="check-row" id="comment-check-row">
+        <input type="checkbox" id="remove-comments">
+        移除全部批注
+      </label>
+      <p class="warning">操作只作用于安全编号临时副本。清洁后仍有修订或批注时，流程会失败关闭。</p>
+      <div class="actions">
+        <button class="secondary" id="reset-cleaning" type="button">重新选择</button>
+        <button class="primary" id="confirm-cleaning" type="button">确认清洁临时副本</button>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="docx-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>确认 DOCX 脱敏内容</h2>
+          <p id="docx-mode-hint" class="hint"></p>
+        </div>
+        <span class="file-id" id="docx-file-id"></span>
+      </div>
+      <div id="associations" class="subpanel hidden"></div>
+      <div id="table-actions" class="subpanel hidden"></div>
+      <div id="candidate-grid" class="candidate-grid"></div>
+      <div class="actions">
+        <button class="secondary" id="reset-docx" type="button">重新选择</button>
+        <button class="primary" id="confirm-docx" type="button">确认并生成脱敏副本</button>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="visual-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>框选 PDF / 图片敏感区域</h2>
+          <p class="hint">拖动矩形框，先保存区域，再确认生成。PDF 输出是图片型视觉副本，不是真 PDF redaction。</p>
+        </div>
+        <span class="file-id" id="visual-file-id"></span>
+      </div>
+      <div class="visual-toolbar">
+        <button class="secondary" id="previous-page" type="button">上一页</button>
+        <span id="page-label">第 1 页</span>
+        <button class="secondary" id="next-page" type="button">下一页</button>
+        <span class="toolbar-spacer"></span>
+        <button class="secondary" id="clear-page" type="button">清空本页</button>
+      </div>
+      <div class="visual-workspace">
+        <div class="canvas-shell" id="canvas-shell">
+          <img id="page-image" alt="本地文件页面预览">
+          <canvas id="region-canvas"></canvas>
+        </div>
+        <aside class="region-list">
+          <h3>已选区域</h3>
+          <p id="region-count">0 个区域</p>
+          <ol id="region-items"></ol>
+        </aside>
+      </div>
+      <div class="actions">
+        <button class="secondary" id="reset-visual" type="button">重新选择</button>
+        <button class="secondary" id="save-regions" type="button">保存区域</button>
+        <button class="primary" id="generate-visual" type="button" disabled>确认生成脱敏副本</button>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="status-panel">
+      <div class="status-head">
+        <h2 id="status-title">处理中</h2>
+        <span class="file-id" id="status-file-id"></span>
+      </div>
+      <p class="status-message" id="status-message" role="status" aria-live="polite"></p>
+      <div class="progress" id="progress"><span></span></div>
+      <div id="error-list" class="error-list hidden"></div>
+      <div id="download-area" class="download-area hidden">
+        <a class="primary download-button" id="download-link" href="#">下载脱敏文件</a>
+        <p class="warning">下载后请在本地打开并逐页复核，确认没有残留敏感信息。</p>
+      </div>
+      <div class="actions">
+        <button class="secondary" id="reset-status" type="button">处理另一份文件</button>
+        <button class="secondary" id="shutdown" type="button">关闭本机服务</button>
+      </div>
+    </section>
+
+    <p class="footer-status" id="global-status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="/assets/app.js?token=__TOKEN__"></script>
+</body>
+</html>

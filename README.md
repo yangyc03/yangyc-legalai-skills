@@ -26,7 +26,7 @@ plugins/
         SKILL.md
 ```
 
-当前仓库处于初始化阶段，尚未发布可安装 Skill。首批 Skill 将在完成公开发布审查后加入。
+当前分支包含首个公开发行候选插件 `local-redaction-assistant v1.1.1-beta`，正在通过 Draft PR 接受公开发布审查。公共仓库的 `main` 分支只有在完成复核后才视为正式发行。
 
 ## 公开发布标准
 

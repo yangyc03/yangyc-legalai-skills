@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "local_sensitive_file": true,
+  "custom_terms": {
+    "companies": [
+      "北京测试科技有限公司"
+    ],
+    "company_aliases": [
+      "测试科技"
+    ],
+    "persons": [
+      "张三"
+    ],
+    "projects": [
+      "测试项目"
+    ],
+    "clients": [],
+    "counterparties": [],
+    "institutions": [],
+    "meeting_locations": [],
+    "other_locations": [],
+    "template_years": [],
+    "template_dates": [],
+    "headcounts": [],
+    "share_counts": [],
+    "vote_counts": [],
+    "ownership_ratios": [],
+    "service_fees": [],
+    "other_amounts": [],
+    "service_terms": [],
+    "fund_manager_registration_numbers": [],
+    "registration_numbers": [],
+    "lawyer_phones": [],
+    "phones": [],
+    "emails": [],
+    "identity_numbers": [],
+    "addresses": [
+      "北京市朝阳区测试路1号"
+    ],
+    "other_terms": []
+  }
+}

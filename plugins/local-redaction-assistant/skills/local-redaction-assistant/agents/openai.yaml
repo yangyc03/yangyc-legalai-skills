@@ -1,0 +1,4 @@
+interface:
+  display_name: "本地文件脱敏辅助"
+  short_description: "本地单文件及受控批量法律模板脱敏，Word 原生验证和人工复核"
+  default_prompt: "使用 local-redaction-assistant 对我明确指定的本地副本执行人工确认的脱敏流程；保持原件不动，不向对话输出敏感正文。"
