@@ -36,13 +36,16 @@ from docx_clean_copy import (
     public_candidate_payload,
     scan_docx_occurrences,
 )
-from docx_redaction_profile import TERM_CATEGORIES, TERM_CATEGORY_LABELS, extract_profile_candidates
+from docx_redaction_profile import (
+    TERM_CATEGORIES,
+    TERM_CATEGORY_LABELS,
+    normalise_redaction_dictionary,
+)
 from local_redactor import (
     AI_SHARE_PROFILE,
     IMAGE_EXTENSIONS,
     OUTPUT_MARKER,
     VERSION,
-    extract_docx_main_body_text,
 )
 from local_region_selector import RegionSelectorError, SelectorState, _inspect_source
 from local_term_selector import (
@@ -160,6 +163,8 @@ class WebSession:
     legacy_candidates: bool = True
     occurrences: list[Any] = field(default_factory=list)
     tables: list[Any] = field(default_factory=list)
+    dictionary: dict[str, list[str]] = field(default_factory=dict)
+    auto_occurrence_ids: set[str] = field(default_factory=set)
     page_count: int = 0
     preview_dpi: int = 160
     region_selector: SelectorState | None = None
@@ -208,6 +213,8 @@ class WebSession:
                 "candidate_associations": list(self.candidate_associations),
                 "category_labels": dict(TERM_CATEGORY_LABELS),
                 "table_candidates": list(self.table_candidates),
+                "dictionary_loaded": bool(self.dictionary),
+                "high_confidence_count": len(self.auto_occurrence_ids),
                 "page_count": self.page_count,
                 "regions_saved": self.regions_saved,
                 "manual_review_required": True,
@@ -250,24 +257,28 @@ class WebSession:
 def _prepare_docx_candidates(state: WebSession) -> None:
     if state.active_source_path is None:
         raise WebAppError("web_docx_source_missing")
-    if state.profile == "legal-template":
-        occurrences, tables, preflight = scan_docx_occurrences(state.active_source_path)
-        state.occurrences = occurrences
-        state.tables = tables
-        state.preflight = preflight
-        state.candidate_terms = public_candidate_payload(occurrences)
-        state.table_candidates = [table.public() for table in tables]
-        state.candidate_associations = []
-    else:
-        text, _reasons, read_error = extract_docx_main_body_text(state.active_source_path)
-        if read_error:
-            raise WebAppError("web_docx_candidate_read_failed")
-        profile_result = extract_profile_candidates(text, state.profile)
-        state.candidate_terms = dict(profile_result["candidate_terms"])
-        state.candidate_associations = list(profile_result.get("candidate_associations", []))
-        state.table_candidates = []
-        state.occurrences = []
-        state.tables = []
+    occurrences, tables, preflight = scan_docx_occurrences(
+        state.active_source_path,
+        profile=state.profile,
+        dictionary=state.dictionary or None,
+        main_body_only=state.profile == AI_SHARE_PROFILE,
+    )
+    state.occurrences = occurrences
+    state.tables = tables
+    state.preflight = preflight
+    if not preflight.get("docx_scan_complete"):
+        raise WebAppError("web_docx_scan_incomplete")
+    state.candidate_terms = public_candidate_payload(occurrences)
+    state.table_candidates = []
+    for table in tables:
+        public_table = table.public()
+        if state.profile == AI_SHARE_PROFILE:
+            public_table["actions"] = ["term-only"]
+        state.table_candidates.append(public_table)
+    state.candidate_associations = []
+    state.auto_occurrence_ids = {
+        occurrence.occurrence_id for occurrence in occurrences if occurrence.auto_eligible
+    }
 
     normalised: dict[str, list[dict]] = {}
     legacy_flags: list[bool] = []
@@ -280,7 +291,7 @@ def _prepare_docx_candidates(state: WebSession) -> None:
     state.normalised_candidates = normalised
     state.legacy_candidates = all(legacy_flags) if legacy_flags else True
     state.phase = "docx_review"
-    state.message = "请在本地页面确认需要替换的候选词。"
+    state.message = "请在本地页面确认候选词；高置信格式项默认不自动替换。"
 
 
 def _prepare_visual_session(state: WebSession) -> None:
@@ -365,7 +376,10 @@ def _decode_multipart_filename(filename: str) -> str:
         return filename
 
 
-def _parse_upload(handler: BaseHTTPRequestHandler, max_upload_bytes: int) -> tuple[str, str, Path]:
+def _parse_upload(
+    handler: BaseHTTPRequestHandler,
+    max_upload_bytes: int,
+) -> tuple[str, str, Path, dict[str, list[str]]]:
     try:
         length = int(handler.headers.get("Content-Length", "0"))
     except ValueError as exc:
@@ -384,6 +398,8 @@ def _parse_upload(handler: BaseHTTPRequestHandler, max_upload_bytes: int) -> tup
     suffix = ""
     target: Path | None = None
     file_seen = False
+    dictionary_payload: object | None = None
+    dictionary_seen = False
     try:
         with tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024) as body:
             remaining = length
@@ -425,6 +441,18 @@ def _parse_upload(handler: BaseHTTPRequestHandler, max_upload_bytes: int) -> tup
                     target = Path(tempfile.mkstemp(prefix="web-upload-", suffix=suffix)[1])
                     file_seen = True
                     target.write_bytes(content)
+                elif field_name == "dictionary":
+                    if dictionary_seen or not filename:
+                        raise WebAppError("web_upload_multiple_dictionaries_not_allowed")
+                    if Path(filename).suffix.lower() != ".json":
+                        raise WebAppError("web_dictionary_extension_unsupported")
+                    if len(content) > 512 * 1024:
+                        raise WebAppError("web_dictionary_too_large")
+                    try:
+                        dictionary_payload = json.loads(content.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise WebAppError("redaction_dictionary_json_invalid") from exc
+                    dictionary_seen = True
                 else:
                     value = content.decode("utf-8", "replace").strip()
                     if field_name == "profile":
@@ -436,11 +464,12 @@ def _parse_upload(handler: BaseHTTPRequestHandler, max_upload_bytes: int) -> tup
         if target.stat().st_size <= 0 or target.stat().st_size > max_upload_bytes:
             raise WebAppError("web_upload_too_large")
         _safe_chmod(target)
+        dictionary = normalise_redaction_dictionary(dictionary_payload) if dictionary_payload is not None else {}
     except BaseException:
         if target is not None:
             target.unlink(missing_ok=True)
         raise
-    return profile, display_name, target
+    return profile, display_name, target, dictionary
 
 
 def _run_subprocess(command: list[str], timeout_seconds: int = 600) -> int:
@@ -490,37 +519,33 @@ def _run_docx_job(state: WebSession, selection: dict[str, Any]) -> None:
                 state.result_path = final_path
                 state.download_name = final_path.name
         else:
-            terms_path = state.workspace / "redaction_terms.local.json"
-            _write_safe_json(terms_path, {"custom_terms": dict(selection.get("terms", {}))})
-            command = [
-                sys.executable,
-                str(Path(__file__).with_name("local_redactor.py")),
-                "--input",
-                str(state.active_source_path),
-                "--output",
-                str(output_path),
-                "--mode",
-                "redact",
-                "--redaction-profile",
-                state.profile,
-                "--terms-file",
-                str(terms_path),
-                "--word-validation",
-                "off",
-                "--allow-existing-output",
-            ]
-            return_code = _run_subprocess(command)
-            report_path = output_path / "reports" / "redaction_report.json"
-            if return_code != 0:
-                state.error_codes = _error_codes_from_report(report_path) or ["web_docx_redaction_failed"]
+            occurrences = state.occurrences
+            addition_ids: list[str] = []
+            manual_additions = selection.get("manual_additions", {})
+            if manual_additions:
+                occurrences, addition_ids = add_manual_occurrences(
+                    state.active_source_path,
+                    occurrences,
+                    dict(manual_additions),
+                    main_body_only=True,
+                )
+            selected_ids = list(dict.fromkeys(list(selection.get("selected_occurrence_ids", [])) + addition_ids))
+            final_path = output_path / "redacted_files" / f"{state.file_id}_脱敏版.docx"
+            result = create_template_copy(
+                state.active_source_path,
+                final_path,
+                occurrences,
+                [],
+                selected_ids,
+                {},
+                word_validation="off",
+                audit_parts={"word/document.xml"},
+            )
+            if result.get("status") != "redaction_succeeded":
+                state.error_codes = list(result.get("error_codes", [])) or ["web_docx_redaction_failed"]
             else:
-                final_path = _find_safe_output(output_path, ".docx", f"{state.file_id}_脱敏版.docx")
-                if final_path is None:
-                    state.error_codes = ["web_docx_output_missing"]
-                else:
-                    state.result_path = final_path
-                    state.download_name = final_path.name
-            terms_path.unlink(missing_ok=True)
+                state.result_path = final_path
+                state.download_name = final_path.name
         success = state.result_path is not None and not state.error_codes
         state.phase = "completed" if success else "failed"
         state.message = "脱敏文件已生成，请下载后逐页人工复核。" if success else "脱敏未完成，请查看错误状态并重新处理。"
@@ -703,7 +728,7 @@ def _handler_factory(state: WebSession, origin: str, max_upload_bytes: int):
                     with state.lock:
                         if state.job_thread and state.job_thread.is_alive():
                             raise WebAppError("web_job_already_running")
-                        profile, display_name, uploaded_path = _parse_upload(self, max_upload_bytes)
+                        profile, display_name, uploaded_path, dictionary = _parse_upload(self, max_upload_bytes)
                         state.reset_workspace()
                         target = state.workspace / f"{state.file_id}{uploaded_path.suffix.lower()}"
                         uploaded_path.replace(target)
@@ -713,6 +738,7 @@ def _handler_factory(state: WebSession, origin: str, max_upload_bytes: int):
                         state.suffix = target.suffix.lower()
                         state.source_type = _safe_source_type(state.suffix)
                         state.profile = profile
+                        state.dictionary = dictionary
                         state.preflight = {}
                         state.candidate_terms = {}
                         state.candidate_associations = []
@@ -721,6 +747,7 @@ def _handler_factory(state: WebSession, origin: str, max_upload_bytes: int):
                         state.legacy_candidates = True
                         state.occurrences = []
                         state.tables = []
+                        state.auto_occurrence_ids = set()
                         state.page_count = 0
                         state.regions_saved = 0
                         state.region_selector = None
@@ -785,8 +812,9 @@ def _handler_factory(state: WebSession, origin: str, max_upload_bytes: int):
                             token=state.token,
                             candidate_associations=_normalise_associations(state.candidate_associations),
                             redaction_profile=state.profile,
-                            tables=_normalise_tables(state.table_candidates),
+                            tables=_normalise_tables(state.table_candidates) if state.profile == "legal-template" else [],
                             legacy_candidates=state.legacy_candidates,
+                            auto_occurrence_ids=set(state.auto_occurrence_ids),
                         )
                         selector.confirm(payload)
                         if selector.result is None:
@@ -825,6 +853,7 @@ def _handler_factory(state: WebSession, origin: str, max_upload_bytes: int):
                         state.suffix = ""
                         state.source_type = ""
                         state.profile = AI_SHARE_PROFILE
+                        state.dictionary = {}
                         state.phase = "idle"
                         state.message = "请选择一份本地副本。"
                         state.preflight = {}
@@ -835,6 +864,7 @@ def _handler_factory(state: WebSession, origin: str, max_upload_bytes: int):
                         state.legacy_candidates = True
                         state.occurrences = []
                         state.tables = []
+                        state.auto_occurrence_ids = set()
                         state.page_count = 0
                         state.region_selector = None
                         state.regions_path = None

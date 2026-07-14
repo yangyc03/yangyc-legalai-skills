@@ -27,8 +27,6 @@ from local_redactor import (
     OUTPUT_MARKER,
     PDF_REGIONS_FILENAME,
     VERSION,
-    extract_docx_main_body_text,
-    extract_profile_candidates,
     validate_output_path,
 )
 from local_region_selector import RegionSelectorError, run_region_selector
@@ -365,21 +363,31 @@ def run_docx_flow(args: argparse.Namespace, input_path: Path, output_path: Path,
     if redaction_profile == "legal-template":
         return run_legal_template_docx_flow(args, input_path, output_path, file_id)
     try:
-        text, _reasons, read_error = extract_docx_main_body_text(input_path)
-    except Exception:
-        text, read_error = "", True
-    if read_error:
+        occurrences, tables, preflight = scan_docx_occurrences(
+            input_path,
+            profile=redaction_profile,
+            main_body_only=True,
+        )
+    except (OSError, ValueError) as exc:
         write_guided_report(
             output_path,
             "docx",
             "guided_docx_candidate_read_failed",
-            ["guided_docx_candidate_read_failed"],
+            [str(exc) or "guided_docx_candidate_read_failed"],
+            redaction_profile=redaction_profile,
+        )
+        return 2
+    if not preflight.get("docx_scan_complete"):
+        write_guided_report(
+            output_path,
+            "docx",
+            "guided_docx_scan_incomplete",
+            ["guided_docx_scan_incomplete"],
             redaction_profile=redaction_profile,
         )
         return 2
 
-    profile_result = extract_profile_candidates(text, redaction_profile)
-    candidates = profile_result["candidate_terms"]
+    candidates = public_candidate_payload(occurrences)
     try:
         selection = run_term_selector(
             file_id,
@@ -387,8 +395,9 @@ def run_docx_flow(args: argparse.Namespace, input_path: Path, output_path: Path,
             args.selector_port,
             args.selector_timeout_seconds,
             not args.no_open_browser,
-            candidate_associations=profile_result["candidate_associations"],
+            candidate_associations=[],
             redaction_profile=redaction_profile,
+            table_candidates=[],
         )
     except TermSelectorError as exc:
         write_guided_report(
@@ -413,27 +422,72 @@ def run_docx_flow(args: argparse.Namespace, input_path: Path, output_path: Path,
         )
         return 0
 
-    workspace, terms_path = write_temporary_terms(dict(selection.get("terms", {})))
+    # Keep compatibility with older/custom selectors that return only a terms
+    # payload. The bundled selector returns occurrence IDs and uses the v1.2
+    # table-aware path below.
+    if "selected_occurrence_ids" not in selection:
+        workspace, terms_path = write_temporary_terms(dict(selection.get("terms", {})))
+        try:
+            command = common_redactor_arguments(input_path, output_path, args.config)
+            command.extend(
+                [
+                    "--mode",
+                    "redact",
+                    "--redaction-profile",
+                    redaction_profile,
+                    "--terms-file",
+                    str(terms_path),
+                ]
+            )
+            return_code = run_redactor(command)
+        finally:
+            workspace.cleanup()
+        copy_created = return_code == 0 and downstream_copy_created(output_path, "docx")
+        write_guided_report(
+            output_path,
+            "docx",
+            "guided_docx_redaction_completed" if copy_created else "guided_docx_redaction_failed",
+            [] if return_code == 0 else ["guided_docx_redaction_command_failed"],
+            selected_counts,
+            redaction_command_completed=return_code == 0,
+            redacted_copy_created=copy_created,
+            redaction_profile=redaction_profile,
+        )
+        return return_code
+
     try:
-        command = common_redactor_arguments(input_path, output_path, args.config)
-        command.extend(
-            [
-                "--mode",
-                "redact",
-                "--redaction-profile",
-                redaction_profile,
-                "--terms-file",
-                str(terms_path),
-            ]
+        occurrences, addition_ids = add_manual_occurrences(
+            input_path,
+            occurrences,
+            dict(selection.get("manual_additions", {})),
+            main_body_only=True,
         )
-        word_validation = getattr(args, "word_validation", None) or (
-            "required" if redaction_profile == "legal-template" else "off"
+    except ValueError as exc:
+        write_guided_report(
+            output_path,
+            "docx",
+            "guided_docx_manual_addition_failed",
+            [str(exc) or "guided_docx_manual_addition_failed"],
+            selected_counts,
+            redaction_profile=redaction_profile,
         )
-        command.extend(["--word-validation", word_validation])
-        return_code = run_redactor(command)
-    finally:
-        workspace.cleanup()
-    copy_created = return_code == 0 and downstream_copy_created(output_path, "docx")
+        return 2
+    selected_ids = list(dict.fromkeys(list(selection.get("selected_occurrence_ids", [])) + addition_ids))
+    final_path = output_path / "redacted_files" / f"{file_id}_脱敏版.docx"
+    try:
+        result = create_template_copy(
+            input_path,
+            final_path,
+            occurrences,
+            tables,
+            selected_ids,
+            {},
+            word_validation=getattr(args, "word_validation", None) or "off",
+            audit_parts={"word/document.xml"},
+        )
+    except (OSError, ValueError) as exc:
+        result = {"status": "redaction_failed", "error_codes": [str(exc) or "guided_docx_redaction_failed"]}
+    copy_created = result.get("status") == "redaction_succeeded" and final_path.is_file()
     write_guided_report(
         output_path,
         "docx",
@@ -441,16 +495,16 @@ def run_docx_flow(args: argparse.Namespace, input_path: Path, output_path: Path,
             "guided_docx_redaction_completed"
             if copy_created
             else "guided_docx_redaction_completed_no_copy"
-            if return_code == 0
+            if result.get("status") == "redaction_succeeded"
             else "guided_docx_redaction_failed"
         ),
-        [] if return_code == 0 else ["guided_docx_redaction_command_failed"],
+        list(result.get("error_codes", [])),
         selected_counts,
-        redaction_command_completed=return_code == 0,
+        redaction_command_completed=result.get("status") == "redaction_succeeded",
         redacted_copy_created=copy_created,
         redaction_profile=redaction_profile,
     )
-    return return_code
+    return 0 if copy_created else 2
 
 
 def run_visual_flow(args: argparse.Namespace, input_path: Path, output_path: Path) -> int:

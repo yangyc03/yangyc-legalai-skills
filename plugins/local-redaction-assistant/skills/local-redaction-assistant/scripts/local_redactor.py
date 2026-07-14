@@ -48,7 +48,7 @@ from docx_redaction_profile import (
 from local_region_selector import RegionSelectorError, run_region_selector
 from word_native_validator import WORD_VALIDATION_MODES, validate_docx_with_word
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 SUPPORTED_EXTENSIONS = {".docx", ".xlsx", ".pdf", ".png", ".jpg", ".jpeg", ".txt"}
 TEXT_DETECTOR_EXTENSIONS = {".txt"}
 DOCX_DETECTOR_EXTENSIONS = {".docx"}

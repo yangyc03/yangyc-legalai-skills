@@ -8,18 +8,23 @@ import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree
 
 from docx_redaction_profile import (
     LEGAL_TEMPLATE_PROFILE,
+    TERM_CATEGORIES,
     TERM_CATEGORY_LABELS,
     XmlTextSlice,
+    extract_profile_candidates,
     _decode_text,
     _markup_end,
     _tag_details,
     apply_byte_patches,
-    extract_profile_candidates,
+    extract_safe_docx_text_units,
     extract_safe_docx_text_slices,
+    is_high_confidence_candidate,
+    normalise_redaction_dictionary,
     sanitise_docx_metadata_part,
     validate_docx_ooxml_package,
     xml_escape_text,
@@ -76,6 +81,10 @@ class Occurrence:
     start: int
     end: int
     replacement_supported: bool = True
+    auto_eligible: bool = False
+    table_id: str | None = None
+    row_index: int | None = None
+    cell_index: int | None = None
 
     def public(self) -> dict:
         return {
@@ -84,6 +93,10 @@ class Occurrence:
             "display": self.display,
             "part_scope": _part_scope(self.part_name),
             "replacement_supported": self.replacement_supported,
+            "auto_eligible": self.auto_eligible,
+            "table_id": self.table_id,
+            "row_index": self.row_index,
+            "cell_index": self.cell_index,
         }
 
 
@@ -93,6 +106,7 @@ class RowRef:
     end: int
     text: str
     slices: tuple[XmlTextSlice, ...]
+    cell_count: int = 0
 
 
 @dataclass
@@ -100,6 +114,10 @@ class TableRef:
     table_id: str
     part_name: str
     rows: list[RowRef] = field(default_factory=list)
+
+    @property
+    def cell_count(self) -> int:
+        return sum(int(getattr(row, "cell_count", 0)) for row in self.rows)
 
     @property
     def total_rows(self) -> list[int]:
@@ -110,6 +128,7 @@ class TableRef:
             "table_id": self.table_id,
             "part_scope": _part_scope(self.part_name),
             "row_count": len(self.rows),
+            "cell_count": self.cell_count,
             "header_rows_preserved": [1] if self.rows else [],
             "total_rows_detected": [index + 1 for index in self.total_rows],
             "actions": list(TABLE_ACTIONS),
@@ -190,28 +209,79 @@ def _scan_part_occurrences(
     start_number: int,
     *,
     text_box_only: bool = False,
+    profile: str = LEGAL_TEMPLATE_PROFILE,
+    dictionary: dict[str, list[str]] | None = None,
+    table_ids: list[str] | None = None,
+    required_ancestor: str | None = None,
 ) -> tuple[list[Occurrence], int]:
     excluded = set(EXCLUDED_TEXT_ANCESTORS)
-    required_ancestor = None
     replacement_supported = True
     if text_box_only:
         excluded.difference_update({"txbxContent", "pict", "drawing", "object"})
         required_ancestor = "txbxContent"
         replacement_supported = False
-    paragraphs, errors = extract_safe_docx_text_slices(payload, excluded, required_ancestor)
-    if errors:
-        raise ValueError(errors[0])
+    if dictionary is None:
+        dictionary = {category: [] for category in TERM_CATEGORIES}
+        dictionary["allowlist"] = []
+    if text_box_only:
+        paragraphs, errors = extract_safe_docx_text_slices(payload, excluded, required_ancestor)
+        if errors:
+            raise ValueError(errors[0])
+        units = [
+            type("LegacyUnit", (), {
+                "paragraph_index": index,
+                "slices": tuple(slices),
+                "table_index": None,
+                "row_index": None,
+                "cell_index": None,
+                "logical_text": "".join(item.text for item in slices),
+            })()
+            for index, slices in enumerate(paragraphs)
+        ]
+    else:
+        units, _coverage, errors = extract_safe_docx_text_units(
+            payload,
+            excluded,
+            required_ancestor,
+            part_scope=_part_scope(part_name),
+            table_ids=table_ids,
+        )
+        if errors:
+            raise ValueError(errors[0])
+    row_units: dict[tuple[int, int], list[Any]] = defaultdict(list)
+    for unit in units:
+        if unit.table_index is not None and unit.row_index is not None:
+            row_units[(unit.table_index, unit.row_index)].append(unit)
     occurrences: list[Occurrence] = []
     number = start_number
-    for paragraph_index, slices in enumerate(paragraphs):
-        logical = "".join(item.text for item in slices)
-        candidates = extract_profile_candidates(logical, LEGAL_TEMPLATE_PROFILE)["candidate_terms"]
+    for unit in units:
+        paragraph_index = unit.paragraph_index
+        logical = unit.logical_text
+        candidate_results = [extract_profile_candidates(logical, profile)]
+        table_key = (unit.table_index, unit.row_index)
+        if unit.table_index is not None and unit.row_index is not None:
+            row_text = " ".join(item.logical_text for item in row_units[table_key])
+            candidate_results.append(extract_profile_candidates(row_text, profile))
+        candidates: dict[str, list[str]] = {category: [] for category in TERM_CATEGORIES}
+        allowlist = set(dictionary.get("allowlist", []))
+        for result in candidate_results:
+            for category, displays in result["candidate_terms"].items():
+                for display in displays:
+                    if display not in allowlist and display not in candidates.setdefault(category, []):
+                        candidates[category].append(display)
+        for category, terms in dictionary.items():
+            if category == "allowlist":
+                continue
+            for term in terms:
+                if term not in allowlist and term not in candidates.setdefault(category, []):
+                    candidates[category].append(term)
         proposals: list[tuple[int, int, str, str, str]] = []
         for category, displays in candidates.items():
             for display in displays:
                 for start, end, raw in _candidate_spans(logical, category, display):
                     proposals.append((start, end, category, display, raw))
         chosen: list[tuple[int, int]] = []
+        table_id = getattr(unit, "table_id", None)
         for start, end, category, display, raw in sorted(
             proposals, key=lambda item: (item[0], -(item[1] - item[0]), item[2])
         ):
@@ -229,6 +299,10 @@ def _scan_part_occurrences(
                     start=start,
                     end=end,
                     replacement_supported=replacement_supported,
+                    auto_eligible=is_high_confidence_candidate(category, display),
+                    table_id=table_id,
+                    row_index=unit.row_index,
+                    cell_index=unit.cell_index,
                 )
             )
             number += 1
@@ -254,7 +328,9 @@ def _scan_tables(part_name: str, payload: bytes, start_number: int) -> tuple[lis
                 number += 1
                 table_stack.append(table)
             elif name == "tr" and table_stack:
-                row_stack.append({"start": start, "texts": [], "slices": []})
+                row_stack.append({"start": start, "texts": [], "slices": [], "cell_count": 0})
+            elif name == "tc" and row_stack:
+                row_stack[-1]["cell_count"] += 1
             elif name == "t" and row_stack:
                 text_stack.append(end)
         elif kind == "end":
@@ -269,7 +345,7 @@ def _scan_tables(part_name: str, payload: bytes, start_number: int) -> tuple[lis
             elif name == "tr" and table_stack and row_stack:
                 row = row_stack.pop()
                 table_stack[-1].rows.append(
-                    RowRef(row["start"], end, "".join(row["texts"]), tuple(row["slices"]))
+                    RowRef(row["start"], end, "".join(row["texts"]), tuple(row["slices"]), row["cell_count"])
                 )
             elif name == "tbl" and table_stack:
                 tables.append(table_stack.pop())
@@ -277,25 +353,82 @@ def _scan_tables(part_name: str, payload: bytes, start_number: int) -> tuple[lis
     return tables, number
 
 
-def scan_docx_occurrences(path: Path) -> tuple[list[Occurrence], list[TableRef], dict[str, int | bool]]:
+def scan_docx_occurrences(
+    path: Path,
+    *,
+    profile: str = LEGAL_TEMPLATE_PROFILE,
+    dictionary: dict[str, list[str]] | None = None,
+    main_body_only: bool = False,
+) -> tuple[list[Occurrence], list[TableRef], dict[str, Any]]:
     preflight = inspect_docx_features(path)
+    if dictionary is None:
+        dictionary = {category: [] for category in TERM_CATEGORIES}
+        dictionary["allowlist"] = []
+    elif "version" in dictionary:
+        dictionary = normalise_redaction_dictionary(dictionary)
     occurrences: list[Occurrence] = []
     tables: list[TableRef] = []
     occurrence_number = 1
     table_number = 1
+    coverage = {"text_units": 0, "text_nodes": 0, "tables": 0, "rows": 0, "cells": 0}
+    parts_scanned = 0
+    parts_skipped = 0
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
         for part_name in supported_text_parts(names):
+            if main_body_only and part_name != "word/document.xml":
+                parts_skipped += 1
+                continue
             payload = archive.read(part_name)
-            found, occurrence_number = _scan_part_occurrences(part_name, payload, occurrence_number)
-            occurrences.extend(found)
-            if b"txbxContent" in payload:
-                found, occurrence_number = _scan_part_occurrences(
-                    part_name, payload, occurrence_number, text_box_only=True
-                )
-                occurrences.extend(found)
             found_tables, table_number = _scan_tables(part_name, payload, table_number)
             tables.extend(found_tables)
+            table_ids = [table.table_id for table in found_tables]
+            found, occurrence_number = _scan_part_occurrences(
+                part_name,
+                payload,
+                occurrence_number,
+                profile=profile,
+                dictionary=dictionary,
+                table_ids=table_ids,
+                required_ancestor="body" if main_body_only else None,
+            )
+            occurrences.extend(found)
+            units, unit_coverage, unit_errors = extract_safe_docx_text_units(
+                payload,
+                set(EXCLUDED_TEXT_ANCESTORS),
+                "body" if main_body_only else None,
+                part_scope=_part_scope(part_name),
+                table_ids=table_ids,
+            )
+            if unit_errors:
+                raise ValueError(unit_errors[0])
+            for key in coverage:
+                coverage[key] += unit_coverage[key]
+            parts_scanned += 1
+            if b"txbxContent" in payload and not main_body_only:
+                found, occurrence_number = _scan_part_occurrences(
+                    part_name,
+                    payload,
+                    occurrence_number,
+                    text_box_only=True,
+                    profile=profile,
+                    dictionary=dictionary,
+                )
+                occurrences.extend(found)
+    preflight.update(
+        {
+            "docx_profile": profile,
+            "docx_main_body_only": main_body_only,
+            "docx_text_units_scanned": coverage["text_units"],
+            "docx_text_nodes_scanned": coverage["text_nodes"],
+            "docx_tables_scanned": len(tables),
+            "docx_rows_scanned": sum(len(table.rows) for table in tables),
+            "docx_cells_scanned": sum(table.cell_count for table in tables),
+            "docx_parts_scanned": parts_scanned,
+            "docx_parts_skipped": parts_skipped,
+            "docx_scan_complete": parts_scanned > 0,
+        }
+    )
     return occurrences, tables, preflight
 
 
@@ -310,6 +443,8 @@ def add_manual_occurrences(
     path: Path,
     existing: list[Occurrence],
     additions: dict[str, list[str]],
+    *,
+    main_body_only: bool = False,
 ) -> tuple[list[Occurrence], list[str]]:
     """Resolve browser-entered terms to exact in-memory occurrences without persisting raw mappings."""
     result = list(existing)
@@ -322,8 +457,12 @@ def add_manual_occurrences(
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
         for part_name in supported_text_parts(names):
+            if main_body_only and part_name != "word/document.xml":
+                continue
             paragraphs, errors = extract_safe_docx_text_slices(
-                archive.read(part_name), EXCLUDED_TEXT_ANCESTORS, None
+                archive.read(part_name),
+                EXCLUDED_TEXT_ANCESTORS,
+                "body" if main_body_only else None,
             )
             if errors:
                 raise ValueError(errors[0])
@@ -457,7 +596,12 @@ def _patch_supported_part(
     return output, counts, replacements
 
 
-def residual_audit(path: Path, selected: list[Occurrence]) -> list[str]:
+def residual_audit(
+    path: Path,
+    selected: list[Occurrence],
+    *,
+    audit_parts: set[str] | None = None,
+) -> list[str]:
     errors: set[str] = set()
     selected_values = {item.raw for item in selected}
     preflight = inspect_docx_features(path)
@@ -477,6 +621,8 @@ def residual_audit(path: Path, selected: list[Occurrence]) -> list[str]:
         text = ""
         field_text = ""
         for part_name in supported_text_parts(set(archive.namelist())):
+            if audit_parts is not None and part_name not in audit_parts:
+                continue
             try:
                 root = ElementTree.fromstring(archive.read(part_name))
             except ElementTree.ParseError:
@@ -509,6 +655,7 @@ def create_template_copy(
     table_actions: dict[str, str],
     *,
     word_validation: str = "required",
+    audit_parts: set[str] | None = None,
 ) -> dict:
     """Create one clean legal-template copy; raw occurrence mapping stays in memory."""
     result = {
@@ -577,7 +724,7 @@ def create_template_copy(
             result["error_codes"] = errors
             temp_path.unlink(missing_ok=True)
             return result
-        residual_errors = residual_audit(temp_path, selected)
+        residual_errors = residual_audit(temp_path, selected, audit_parts=audit_parts)
         if residual_errors:
             result["error_codes"] = residual_errors
             temp_path.unlink(missing_ok=True)

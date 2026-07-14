@@ -14,6 +14,12 @@
     web_docx_package_invalid: "这不是可读取的 DOCX 文件，请选择 Word 副本。",
     web_upload_extension_unsupported: "文件格式不支持，请选择 DOCX、PDF、PNG 或 JPG。",
     web_upload_too_large: "文件超过本机网页的大小限制（默认 200 MB）。",
+    web_dictionary_extension_unsupported: "词典只接受 JSON 文件。",
+    web_dictionary_too_large: "词典文件超过本机网页限制（512 KB）。",
+    redaction_dictionary_json_invalid: "词典不是有效的 UTF-8 JSON 文件。",
+    redaction_dictionary_schema_error: "词典结构不符合示例模板，请检查 version、terms 和 allowlist。",
+    redaction_dictionary_category_error: "词典包含不支持的分类，请以示例模板中的分类为准。",
+    web_docx_scan_incomplete: "DOCX 支持范围未完整扫描，已停止生成结果；请换用正常的 Word 副本后重试。",
   };
   const friendlyError = (code) => FRIENDLY_ERRORS[code] || code;
 
@@ -92,7 +98,7 @@
       if (candidate && candidate.replacement_supported === false) box.disabled = true;
       const text = document.createElement("span");
       text.textContent = typeof candidate === "string" ? candidate : candidate.display;
-      if (candidate && candidate.part_scope) { const small = document.createElement("small"); small.textContent = `${candidate.part_scope}${candidate.replacement_supported === false ? " · 需人工处理" : ""}`; text.append(small); }
+      if (candidate && (candidate.part_scope || candidate.auto_eligible)) { const small = document.createElement("small"); small.textContent = `${candidate.part_scope || ""}${candidate.auto_eligible ? " · 高置信格式项" : ""}${candidate.replacement_supported === false ? " · 需人工处理" : ""}`; text.append(small); }
       row.append(box, text); list.append(row);
     });
     const input = document.createElement("input"); input.className = "add-input"; input.type = "text"; input.maxLength = 80; input.placeholder = `补充${labels[category] || category}后按回车`;
@@ -111,9 +117,28 @@
     $("docx-file-id").textContent = `${data.file_id} · ${data.display_name || "DOCX"}`;
     $("docx-mode-hint").textContent = data.profile === "legal-template"
       ? "模板提炼模式：所有候选均需人工确认；未勾选的年份、比例和金额不会替换。"
-      : "普通共享模式：请确认候选词，并补充遗漏的姓名、公司或地址。";
+      : "普通共享模式：请确认候选词，并补充遗漏的姓名、公司、地址或项目变量。高置信格式项默认不替换。";
+    const highConfidenceRow = $("high-confidence-row");
+    const highConfidence = $("high-confidence-auto");
+    if (data.profile === "ai-share" && (data.high_confidence_count || 0) > 0) {
+      highConfidenceRow.classList.remove("hidden");
+      highConfidence.checked = false;
+      highConfidenceRow.lastChild.textContent = `启用高置信格式项自动处理（手机号、邮箱、有效身份证号、统一社会信用代码；共 ${data.high_confidence_count} 处）`;
+    } else {
+      highConfidenceRow.classList.add("hidden");
+      highConfidence.checked = false;
+    }
+    const coverage = data.preflight || {};
+    const coverageParts = [
+      `扫描 ${coverage.docx_text_units_scanned || 0} 个文本单元 / ${coverage.docx_text_nodes_scanned || 0} 个文字节点`,
+      `表格 ${coverage.docx_tables_scanned || 0} 个、${coverage.docx_rows_scanned || 0} 行、${coverage.docx_cells_scanned || 0} 个单元格`,
+    ];
+    if (coverage.docx_parts_skipped) coverageParts.push(`跳过 ${coverage.docx_parts_skipped} 个非本模式范围部件`);
+    $("docx-coverage").textContent = `本次覆盖统计：${coverageParts.join("；")}。${coverage.docx_scan_complete ? "扫描完成。" : "扫描未完整完成，不能生成成功结果。"}`;
     const grid = $("candidate-grid"); grid.replaceChildren();
-    const categories = data.profile === "legal-template" ? Object.keys(data.category_labels || {}) : ["persons", "companies", "addresses"];
+    let categories = Object.keys(data.category_labels || {});
+    if (data.profile !== "legal-template") categories = categories.filter((category) => (data.candidate_terms?.[category] || []).length);
+    if (!categories.length) categories = ["persons", "companies", "addresses"];
     categories.forEach((category) => grid.append(categoryCard(category, data.candidate_terms?.[category] || [], data.category_labels || {})));
     const associations = $("associations"); associations.replaceChildren();
     if ((data.candidate_associations || []).length) {
@@ -123,12 +148,15 @@
     } else hide("associations");
     const tables = $("table-actions"); tables.replaceChildren();
     if ((data.table_candidates || []).length) {
-      const heading = document.createElement("h3"); heading.textContent = "敏感表格逐表处理"; tables.append(heading);
+      const heading = document.createElement("h3"); heading.textContent = data.profile === "legal-template" ? "敏感表格逐表处理" : "正文表格扫描状态"; tables.append(heading);
       data.table_candidates.forEach((table) => {
         const row = document.createElement("label"); row.className = "table-row";
-        const text = document.createElement("span"); text.textContent = `${table.table_id} · ${table.part_scope} · ${table.row_count} 行`;
-        const select = document.createElement("select"); select.dataset.tableId = table.table_id; select.innerHTML = '<option value="term-only">仅替换词项</option><option value="clear-detail-rows">保留表头和合计行，清空其他明细行</option>';
-        row.append(text, select); tables.append(row);
+        const text = document.createElement("span"); text.textContent = `${table.table_id} · ${table.part_scope} · ${table.row_count} 行 · ${table.cell_count || 0} 个单元格${table.scan_complete === false ? " · 扫描不完整" : " · 已扫描"}`;
+        row.append(text);
+        if (data.profile === "legal-template") {
+          const select = document.createElement("select"); select.dataset.tableId = table.table_id; select.innerHTML = '<option value="term-only">仅替换词项</option><option value="clear-detail-rows">保留表头和合计行，清空其他明细行</option>'; row.append(select);
+        }
+        tables.append(row);
       }); show("table-actions");
     } else hide("table-actions");
   }
@@ -140,7 +168,7 @@
       card.querySelectorAll("input[type=checkbox]:checked").forEach((box) => (box.dataset.addition ? additions[category] : selected[category]).push(box.value));
     });
     const table_actions = {}; document.querySelectorAll("select[data-table-id]").forEach((select) => { table_actions[select.dataset.tableId] = select.value; });
-    return { selected, additions, table_actions };
+    return { selected, additions, table_actions, auto_high_confidence: $("high-confidence-auto").checked };
   }
 
   function renderCleaning(data) {
@@ -179,7 +207,9 @@
   $("file-input").addEventListener("change", () => { $("file-name").textContent = $("file-input").files[0]?.name || "尚未选择文件"; });
   $("upload-form").addEventListener("submit", async (event) => {
     event.preventDefault(); const file = $("file-input").files[0]; if (!file) return;
-    const form = new FormData(); form.append("file", file); form.append("profile", $("profile").value); $("upload-button").disabled = true; setGlobalStatus("正在将文件送入本机临时工作区……");
+    const form = new FormData(); form.append("file", file); form.append("profile", $("profile").value);
+    const dictionary = $("dictionary-input").files[0]; if (dictionary) form.append("dictionary", dictionary);
+    $("upload-button").disabled = true; setGlobalStatus("正在将文件送入本机临时工作区……");
     try { const data = await request("/api/upload", { method: "POST", body: form }); renderStatus(data); route(data); } catch (error) { setGlobalStatus(`载入失败：${friendlyError(error.message)}`, true); } finally { $("upload-button").disabled = false; }
   });
   function route(data) { session = data; $("version").textContent = `v${data.version || ""}`; if (data.phase === "docx_cleaning_required") renderCleaning(data); else if (data.phase === "docx_review") renderDocx(data); else if (data.phase === "visual_review") renderVisual(data); else if (["processing", "completed", "failed"].includes(data.phase)) { clearPanels(); show("status-panel"); renderStatus(data); if (data.phase === "processing") startPolling(); } }
@@ -191,7 +221,8 @@
   $("region-canvas").addEventListener("pointerdown", (event) => { const rect = event.currentTarget.getBoundingClientRect(); drawing = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height, currentX: event.clientX, currentY: event.clientY }; event.currentTarget.setPointerCapture(event.pointerId); drawRegions(); });
   $("region-canvas").addEventListener("pointermove", (event) => { if (!drawing) return; drawing.currentX = event.clientX; drawing.currentY = event.clientY; drawRegions(); });
   $("region-canvas").addEventListener("pointerup", (event) => { if (!drawing) return; const rect = event.currentTarget.getBoundingClientRect(); const x1 = (event.clientX - rect.left) / rect.width; const y1 = (event.clientY - rect.top) / rect.height; const region = { x0: Math.max(0, Math.min(drawing.x, x1)), y0: Math.max(0, Math.min(drawing.y, y1)), x1: Math.min(1, Math.max(drawing.x, x1)), y1: Math.min(1, Math.max(drawing.y, y1)) }; drawing = null; if (region.x1 - region.x0 > .005 && region.y1 - region.y0 > .005) pageRegions(currentPage).push(region); drawRegions(); renderRegionList(); });
-  async function reset() { try { const data = await request("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); session = data; clearPanels(); show("upload-panel"); setGlobalStatus(""); $("file-input").value = ""; $("file-name").textContent = "尚未选择文件"; } catch (error) { setGlobalStatus(`无法重新开始：${friendlyError(error.message)}`, true); } }
+  $("dictionary-input").addEventListener("change", () => { $("dictionary-name").textContent = $("dictionary-input").files[0]?.name || "未导入词典"; });
+  async function reset() { try { const data = await request("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); session = data; clearPanels(); show("upload-panel"); setGlobalStatus(""); $("file-input").value = ""; $("file-name").textContent = "尚未选择文件"; $("dictionary-input").value = ""; $("dictionary-name").textContent = "未导入词典"; $("high-confidence-auto").checked = false; $("docx-coverage").textContent = ""; } catch (error) { setGlobalStatus(`无法重新开始：${friendlyError(error.message)}`, true); } }
   ["reset-cleaning", "reset-docx", "reset-visual", "reset-status"].forEach((id) => $(id).addEventListener("click", reset));
   $("shutdown").addEventListener("click", async () => { try { await request("/api/shutdown", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); $("shutdown").disabled = true; setGlobalStatus("本机服务已请求关闭，可以关闭此浏览器页面。", false); } catch (_) { setGlobalStatus("本机服务可能已经关闭。", true); } });
   request("/api/session").then((data) => { session = data; $("version").textContent = `v${data.version || ""}`; route(data); }).catch(() => setGlobalStatus("无法连接本机脱敏服务。", true));

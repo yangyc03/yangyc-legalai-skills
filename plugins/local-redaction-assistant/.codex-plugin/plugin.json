@@ -1,7 +1,7 @@
 {
   "name": "local-redaction-assistant",
-  "version": "1.1.1-beta",
-  "description": "Local-only, browser-guided redaction for explicitly selected DOCX copies and manual PDF/image visual copies.",
+  "version": "1.2.0",
+  "description": "Local-only, browser-guided DOCX table-aware redaction and manual PDF/image visual copies.",
   "author": {
     "name": "Yingchao Yang",
     "url": "https://github.com/yangyc03"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Local Redaction Assistant",
     "shortDescription": "Local-only document redaction",
-    "longDescription": "Run a local-only browser workflow for a lawyer-selected copy. The original file is not overwritten and the generated copy requires human review.",
+    "longDescription": "Run a local-only browser workflow for a lawyer-selected copy, including DOCX table scanning and a session-only JSON dictionary. The original file is not overwritten and the generated copy requires human review.",
     "developerName": "Yingchao Yang",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
