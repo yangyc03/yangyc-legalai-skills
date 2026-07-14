@@ -25,6 +25,7 @@ main { max-width: 1120px; margin: 0 auto; padding: 24px; }
 input[type="file"], select, input[type="text"] { width: 100%; font: inherit; }
 select, input[type="text"] { padding: 10px 12px; color: #172033; background: #fff; border: 1px solid #bac7d8; border-radius: 8px; }
 .file-picker { display: flex; justify-content: center; align-items: center; min-height: 110px; padding: 20px; color: #1267d6; font-weight: 700; text-align: center; background: #f6faff; border: 2px dashed #82b4e9; border-radius: 12px; cursor: pointer; }
+.dictionary-picker { min-height: 58px; margin-top: 14px; color: #526781; font-size: 14px; border-width: 1px; border-style: solid; }
 .file-picker input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 .file-name { margin: 10px 0 0; color: #526781; word-break: break-all; }
 .hint { color: #68788d; font-size: 14px; line-height: 1.6; }

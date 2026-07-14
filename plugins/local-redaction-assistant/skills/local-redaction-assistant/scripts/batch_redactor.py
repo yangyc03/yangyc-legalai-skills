@@ -135,7 +135,7 @@ def run_batch(args, output_path: Path, run_docx_flow, prepare_output) -> int:
     )
     summary = {
         "tool": "local-redaction-assistant",
-        "version": "1.1.1",
+        "version": "1.2.0",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "mode": "legal-template-controlled-batch",
         "files_total": len(records),

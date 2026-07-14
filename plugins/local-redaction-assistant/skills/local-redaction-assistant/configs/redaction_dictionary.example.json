@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "terms": {
+    "companies": [],
+    "company_aliases": [],
+    "persons": [],
+    "projects": [],
+    "institutions": [],
+    "addresses": [],
+    "meeting_locations": [],
+    "other_terms": []
+  },
+  "allowlist": []
+}

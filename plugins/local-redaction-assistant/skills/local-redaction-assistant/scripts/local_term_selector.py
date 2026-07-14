@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from docx_redaction_profile import AI_SHARE_PROFILE, TERM_CATEGORIES, TERM_CATEGORY_LABELS
+from docx_redaction_profile import AI_SHARE_PROFILE, LEGAL_TEMPLATE_PROFILE, TERM_CATEGORIES, TERM_CATEGORY_LABELS
 
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_TERMS_PER_CATEGORY = 100
@@ -97,7 +97,12 @@ def _validate_selection(raw: object, candidates: dict[str, list[dict]]) -> tuple
         additions = _normalise_additions(additions_raw.get(category, []))
         selected_result[category] = selected
         additions_result[category] = additions
-    if not any(selected_result.values()) and not any(additions_result.values()) and not raw.get("table_actions"):
+    if (
+        not any(selected_result.values())
+        and not any(additions_result.values())
+        and not raw.get("table_actions")
+        and not raw.get("auto_high_confidence")
+    ):
         raise TermSelectorError("term_selector_no_terms_confirmed")
     return selected_result, additions_result
 
@@ -183,6 +188,7 @@ class TermSelectorState:
     candidate_associations: list[dict[str, str]] = field(default_factory=list)
     redaction_profile: str = AI_SHARE_PROFILE
     tables: list[dict] = field(default_factory=list)
+    auto_occurrence_ids: set[str] = field(default_factory=set)
     legacy_candidates: bool = True
     result: dict[str, Any] | None = None
     result_ready: threading.Event = field(default_factory=threading.Event)
@@ -197,12 +203,31 @@ class TermSelectorState:
             "redaction_profile": self.redaction_profile,
             "manual_review_required": True,
             "table_candidates": list(self.tables),
+            "high_confidence_count": len(self.auto_occurrence_ids),
         }
 
     def confirm(self, raw: object) -> None:
         selected, additions = _validate_selection(raw, self.candidates)
+        if raw.get("table_actions") and self.redaction_profile != LEGAL_TEMPLATE_PROFILE:
+            raise TermSelectorError("term_selector_table_action_profile_forbidden")
         table_actions = _normalise_table_actions(raw.get("table_actions"), self.tables) if isinstance(raw, dict) else {}
         selected_ids = [item for category in TERM_CATEGORIES for item in selected[category]]
+        auto_added_ids: set[str] = set()
+        if raw.get("auto_high_confidence") and self.redaction_profile != AI_SHARE_PROFILE:
+            raise TermSelectorError("term_selector_auto_high_confidence_profile_forbidden")
+        auto_high_confidence = bool(raw.get("auto_high_confidence"))
+        if auto_high_confidence:
+            auto_added_ids = self.auto_occurrence_ids.difference(selected_ids)
+            selected_ids.extend(sorted(self.auto_occurrence_ids))
+            selected_ids = list(dict.fromkeys(selected_ids))
+        auto_counts = {category: 0 for category in TERM_CATEGORIES}
+        if auto_added_ids:
+            for category in TERM_CATEGORIES:
+                auto_counts[category] = sum(
+                    1
+                    for item in self.candidates.get(category, [])
+                    if isinstance(item, dict) and item.get("id") in auto_added_ids
+                )
         terms: dict[str, list[str]] = {}
         for category in TERM_CATEGORIES:
             displays = {
@@ -210,16 +235,20 @@ class TermSelectorState:
                 for item in self.candidates.get(category, [])
             }
             terms[category] = [displays[item] for item in selected[category]] + additions[category]
+        if not selected_ids and not any(additions.values()) and not table_actions:
+            raise TermSelectorError("term_selector_no_terms_confirmed")
         with self.lock:
             self.result = {
                 "status": "term_selector_terms_confirmed",
                 "selected_term_counts": {
-                    category: len(selected[category]) + len(additions[category]) for category in TERM_CATEGORIES
+                    category: len(selected[category]) + len(additions[category]) + auto_counts[category]
+                    for category in TERM_CATEGORIES
                 },
                 "terms": terms,
                 "selected_occurrence_ids": [] if self.legacy_candidates else selected_ids,
                 "manual_additions": additions,
                 "table_actions": table_actions,
+                "auto_high_confidence": auto_high_confidence,
             }
             self.result_ready.set()
 

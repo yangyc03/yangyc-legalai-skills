@@ -17,12 +17,17 @@ class PublicPackageTests(unittest.TestCase):
     def test_manifest_and_required_files(self):
         data = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertEqual(data["name"], "local-redaction-assistant")
-        self.assertEqual(data["version"], "1.1.1-beta")
+        self.assertEqual(data["version"], "1.2.0")
         self.assertEqual(data["license"], "Apache-2.0")
         self.assertTrue((SKILL_ROOT / "SKILL.md").is_file())
         self.assertTrue((PLUGIN_ROOT / "README.md").is_file())
         self.assertTrue((PLUGIN_ROOT / "THIRD_PARTY_NOTICES.md").is_file())
         self.assertTrue((PLUGIN_ROOT / "requirements-pdf.txt").is_file())
+        dictionary = SKILL_ROOT / "configs" / "redaction_dictionary.example.json"
+        self.assertTrue(dictionary.is_file())
+        dictionary_data = json.loads(dictionary.read_text(encoding="utf-8"))
+        self.assertEqual(dictionary_data["version"], 1)
+        self.assertIn("companies", dictionary_data["terms"])
 
     def test_no_private_path_or_local_config_names(self):
         forbidden = re.compile(
@@ -31,7 +36,12 @@ class PublicPackageTests(unittest.TestCase):
             re.IGNORECASE,
         )
         for path in PLUGIN_ROOT.rglob("*"):
-            if not path.is_file() or ".git" in path.parts:
+            if (
+                not path.is_file()
+                or ".git" in path.parts
+                or "__pycache__" in path.parts
+                or path.suffix == ".pyc"
+            ):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             self.assertIsNone(forbidden.search(text), str(path))

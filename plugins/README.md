@@ -15,6 +15,7 @@ plugins/<plugin-name>/
 
 ## Current candidate
 
-- `local-redaction-assistant` — `1.1.1-beta`
-  - Local-only browser-guided redaction for explicitly selected DOCX copies and manual PDF/image visual copies.
+- `local-redaction-assistant` — `1.2.0`
+  - Local-only browser-guided DOCX table-aware redaction and manual PDF/image visual copies.
+  - Includes session-only JSON dictionary import and explicit high-confidence format-item confirmation.
   - The candidate is distributed under `plugins/local-redaction-assistant/` and remains subject to maintainer review before being treated as a stable release.

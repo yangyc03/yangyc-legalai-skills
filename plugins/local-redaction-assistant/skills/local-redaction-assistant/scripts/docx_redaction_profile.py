@@ -8,6 +8,7 @@ import posixpath
 import re
 import zipfile
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 from xml.etree import ElementTree
@@ -22,6 +23,7 @@ TERM_CATEGORIES = (
     "companies",
     "company_aliases",
     "projects",
+    "institutions",
     "meeting_locations",
     "other_locations",
     "template_years",
@@ -39,7 +41,12 @@ TERM_CATEGORIES = (
     "phones",
     "emails",
     "identity_numbers",
+    "unified_social_credit_codes",
+    "bank_accounts",
+    "case_numbers",
+    "contract_numbers",
     "addresses",
+    "other_terms",
 )
 
 TERM_CATEGORY_LABELS = {
@@ -47,6 +54,7 @@ TERM_CATEGORY_LABELS = {
     "companies": "主体全称",
     "company_aliases": "主体简称",
     "projects": "基金/项目名称",
+    "institutions": "机构/单位",
     "meeting_locations": "会议地点",
     "other_locations": "其他地点/地名",
     "template_years": "项目年份",
@@ -64,7 +72,12 @@ TERM_CATEGORY_LABELS = {
     "phones": "电话/手机号",
     "emails": "邮箱",
     "identity_numbers": "证件号码",
+    "unified_social_credit_codes": "统一社会信用代码",
+    "bank_accounts": "银行账号",
+    "case_numbers": "案号",
+    "contract_numbers": "合同编号",
     "addresses": "地址",
+    "other_terms": "其他词项",
 }
 
 COMPANY_PATTERN = re.compile(
@@ -76,7 +89,7 @@ FUND_PATTERN = re.compile(
     r"(?:私募股权投资基金|股权投资基金|创业投资基金|投资基金|基金)"
 )
 PERSON_PATTERN = re.compile(
-    r"(?:原告|被告|第三人|法定代表人|联系人|委托代理人|代理人|申请人|被申请人|上诉人|被上诉人|"
+    r"(?:姓名|原告|被告|第三人|法定代表人|联系人|委托代理人|代理人|申请人|被申请人|上诉人|被上诉人|"
     r"股东|董事|监事|授权代表|会议主持人|记录人|计票人|监票人)"
     r"[：:，,\s]{0,6}([\u4e00-\u9fff]{2,4})(?![\u4e00-\u9fff])"
 )
@@ -115,6 +128,29 @@ EMAIL_PATTERN = re.compile(r"(?<![A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.
 IDENTITY_CONTEXT_PATTERN = re.compile(
     r"(?:身份证(?:号码|号)?|证件(?:号码|号)?|统一证件号码)[：:]?\s*([0-9A-Za-z*]{15,20})"
 )
+IDENTITY_NUMBER_PATTERN = re.compile(
+    r"(?<![0-9A-Za-z])([1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])"
+    r"(?:0[1-9]|[12]\d|3[01])\d{3}[0-9Xx])(?![0-9A-Za-z])"
+)
+IDENTITY_15_PATTERN = re.compile(
+    r"(?<![0-9A-Za-z])([1-9]\d{5}\d{6}\d{3})(?![0-9A-Za-z])"
+)
+UNIFIED_SOCIAL_CREDIT_PATTERN = re.compile(
+    r"(?<![0-9A-Za-z])[159Y][0-9A-Z]{17}(?![0-9A-Za-z])"
+)
+INSTITUTION_PATTERN = re.compile(
+    r"(?:机构|单位|银行|法院|医院|学校|律所|律师事务所|事务所名称)[：:]?\s*"
+    r"([^\n\r，,；;。]{2,80})"
+)
+BANK_ACCOUNT_PATTERN = re.compile(
+    r"(?:银行账号|银行账户|开户账号|账号)[：:]?\s*([0-9][0-9\- ]{8,29}[0-9])"
+)
+CASE_NUMBER_PATTERN = re.compile(
+    r"(?:案号|案件编号)[：:]?\s*([^\s，,；;。]{4,40})"
+)
+CONTRACT_NUMBER_PATTERN = re.compile(
+    r"(?:合同编号|合同号)[：:]?\s*([^\s，,；;。]{4,40})"
+)
 REGISTRATION_NUMBER_PATTERN = re.compile(
     r"(?:登记编号|备案编号|登记号|备案号)[：:]\s*([A-Za-z0-9_-]{4,40})"
 )
@@ -134,6 +170,95 @@ PERSON_FALSE_POSITIVES = {
     "电话", "手机", "姓名", "信息", "方式", "地址", "会议", "大会",
     "名册", "人数", "代表", "资格", "情况", "数量", "事务",
 }
+
+UNIFIED_CREDIT_ALPHABET = "0123456789ABCDEFGHJKLMNPQRTUWXY"
+UNIFIED_CREDIT_WEIGHTS = (1, 3, 9, 7, 1, 3, 9, 7, 1, 3, 9, 7, 1, 3, 9, 7, 1)
+
+
+def is_valid_identity_number(value: str) -> bool:
+    """Validate mainland resident identity numbers without accepting placeholders."""
+    value = value.upper()
+    if IDENTITY_15_PATTERN.fullmatch(value):
+        try:
+            date(1900 + int(value[6:8]), int(value[8:10]), int(value[10:12]))
+        except ValueError:
+            return False
+        return True
+    if not IDENTITY_NUMBER_PATTERN.fullmatch(value):
+        return False
+    try:
+        date(int(value[6:10]), int(value[10:12]), int(value[12:14]))
+    except ValueError:
+        return False
+    weights = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+    checks = "10X98765432"
+    try:
+        check = sum(int(char) * weight for char, weight in zip(value[:17], weights)) % 11
+    except ValueError:
+        return False
+    return value[-1] == checks[check]
+
+
+def is_valid_unified_social_credit_code(value: str) -> bool:
+    """Validate the 18-character Chinese unified social credit code checksum."""
+    value = value.upper()
+    if not UNIFIED_SOCIAL_CREDIT_PATTERN.fullmatch(value):
+        return False
+    try:
+        total = sum(UNIFIED_CREDIT_ALPHABET.index(char) * weight for char, weight in zip(value[:17], UNIFIED_CREDIT_WEIGHTS))
+    except ValueError:
+        return False
+    check_value = (31 - total % 31) % 31
+    return value[-1] == UNIFIED_CREDIT_ALPHABET[check_value]
+
+
+def is_high_confidence_candidate(category: str, value: str) -> bool:
+    """Return whether a candidate is eligible for explicit user-enabled auto handling."""
+    if category == "phones":
+        return bool(PHONE_PATTERN.fullmatch(value))
+    if category == "emails":
+        return bool(EMAIL_PATTERN.fullmatch(value))
+    if category == "identity_numbers":
+        return is_valid_identity_number(value)
+    if category == "unified_social_credit_codes":
+        return is_valid_unified_social_credit_code(value)
+    return False
+
+
+def normalise_redaction_dictionary(payload: object) -> dict[str, list[str]]:
+    """Validate the local JSON dictionary without persisting source values."""
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise ValueError("redaction_dictionary_schema_error")
+    terms_payload = payload.get("terms", {})
+    allowlist_payload = payload.get("allowlist", [])
+    if not isinstance(terms_payload, dict) or not isinstance(allowlist_payload, list):
+        raise ValueError("redaction_dictionary_schema_error")
+    allowed_keys = set(TERM_CATEGORIES) | {"other_terms"}
+    result: dict[str, list[str]] = {category: [] for category in TERM_CATEGORIES}
+    result["allowlist"] = []
+
+    def normalise_values(values: object, limit: int) -> list[str]:
+        if not isinstance(values, list) or len(values) > limit:
+            raise ValueError("redaction_dictionary_schema_error")
+        normalised: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError("redaction_dictionary_schema_error")
+            value = re.sub(r"\s+", " ", value.strip())
+            if not (2 <= len(value) <= 80) or any(ord(char) < 32 for char in value):
+                raise ValueError("redaction_dictionary_schema_error")
+            if value not in normalised:
+                normalised.append(value)
+        return normalised
+
+    for key, values in terms_payload.items():
+        if key not in allowed_keys:
+            raise ValueError("redaction_dictionary_category_error")
+        target_key = "other_terms" if key == "other_terms" else key
+        result.setdefault(target_key, []).extend(normalise_values(values, 100))
+        result[target_key] = list(dict.fromkeys(result[target_key]))[:100]
+    result["allowlist"] = normalise_values(allowlist_payload, 500)
+    return result
 
 
 def _line(text: str, start: int, end: int) -> str:
@@ -194,69 +319,81 @@ def extract_profile_candidates(
     for match in ADDRESS_PATTERN.finditer(text):
         add("addresses", match.group(1))
 
-    if profile == LEGAL_TEMPLATE_PROFILE:
-        for match in FUND_PATTERN.finditer(text):
-            add("projects", match.group(0))
-        for match in LAWYER_PATTERN.finditer(text):
-            add("persons", match.group(1))
-        for match in ALIAS_PATTERN.finditer(text):
-            alias = match.group(1).strip()
-            add("company_aliases", alias)
-            subject = _nearest_named_subject(text, match.start())
-            if subject:
-                key = (subject, alias)
-                if key not in association_seen and len(associations) < limit_per_type:
-                    association_seen.add(key)
-                    associations.append({"full_name": subject, "alias": alias})
-        for match in MEETING_LOCATION_PATTERN.finditer(text):
-            add("meeting_locations", match.group(1))
-        for match in OTHER_LOCATION_PATTERN.finditer(text):
-            add("other_locations", match.group(1))
-        for match in DATE_PATTERN.finditer(text):
-            add("template_dates", match.group(1))
-        for match in YEAR_PATTERN.finditer(text):
-            context = _clause(text, match.start(), match.end())
-            if not any(protector in context for protector in LEGAL_YEAR_PROTECTORS):
-                add("template_years", match.group(1))
-        for match in HEADCOUNT_PATTERN.finditer(text):
-            context = _clause(text, match.start(), match.end())
-            if any(marker in context for marker in HEADCOUNT_CONTEXT):
-                add("headcounts", match.group(1))
-        for match in SHARE_COUNT_PATTERN.finditer(text):
-            add("share_counts", match.group(1))
-        for match in VOTE_COUNT_PATTERN.finditer(text):
-            add("vote_counts", match.group(1))
-        for match in RATIO_PATTERN.finditer(text):
-            context = _clause(text, match.start(), match.end())
-            if any(marker in context for marker in RATIO_CONTEXT) and not any(
-                protector in context for protector in RATIO_PROTECTORS
-            ):
-                add("ownership_ratios", match.group(1))
-        for match in MONEY_PATTERN.finditer(text):
-            context = _clause(text, match.start(), match.end())
-            if any(marker in context for marker in SERVICE_FEE_CONTEXT):
-                add("service_fees", match.group(0))
-            elif any(marker in context for marker in OTHER_AMOUNT_CONTEXT):
-                add("other_amounts", match.group(0))
-        for match in TERM_PATTERN.finditer(text):
-            add("service_terms", match.group(1))
-        for match in FUND_REGISTRATION_PATTERN.finditer(text):
-            add("fund_manager_registration_numbers", match.group(1))
-        for match in REGISTRATION_NUMBER_PATTERN.finditer(text):
-            add("registration_numbers", match.group(1))
-        for match in PHONE_PATTERN.finditer(text):
-            context = _line(text, match.start(), match.end())
-            if "律师" in context:
-                add("lawyer_phones", match.group(1))
-            if any(marker in context for marker in PHONE_CONTEXT):
-                add("phones", match.group(1))
-        for match in LANDLINE_PATTERN.finditer(text):
-            if any(marker in _line(text, match.start(), match.end()) for marker in PHONE_CONTEXT):
-                add("phones", match.group(1))
-        for match in EMAIL_PATTERN.finditer(text):
-            add("emails", match.group(1))
-        for match in IDENTITY_CONTEXT_PATTERN.finditer(text):
-            add("identity_numbers", match.group(1))
+    for match in FUND_PATTERN.finditer(text):
+        add("projects", match.group(0))
+    for match in LAWYER_PATTERN.finditer(text):
+        add("persons", match.group(1))
+    for match in ALIAS_PATTERN.finditer(text):
+        alias = match.group(1).strip()
+        add("company_aliases", alias)
+        subject = _nearest_named_subject(text, match.start())
+        if subject:
+            key = (subject, alias)
+            if key not in association_seen and len(associations) < limit_per_type:
+                association_seen.add(key)
+                associations.append({"full_name": subject, "alias": alias})
+    for match in INSTITUTION_PATTERN.finditer(text):
+        add("institutions", match.group(1))
+    for match in MEETING_LOCATION_PATTERN.finditer(text):
+        add("meeting_locations", match.group(1))
+    for match in OTHER_LOCATION_PATTERN.finditer(text):
+        add("other_locations", match.group(1))
+    for match in DATE_PATTERN.finditer(text):
+        add("template_dates", match.group(1))
+    for match in YEAR_PATTERN.finditer(text):
+        context = _clause(text, match.start(), match.end())
+        if not any(protector in context for protector in LEGAL_YEAR_PROTECTORS):
+            add("template_years", match.group(1))
+    for match in HEADCOUNT_PATTERN.finditer(text):
+        context = _clause(text, match.start(), match.end())
+        if any(marker in context for marker in HEADCOUNT_CONTEXT):
+            add("headcounts", match.group(1))
+    for match in SHARE_COUNT_PATTERN.finditer(text):
+        add("share_counts", match.group(1))
+    for match in VOTE_COUNT_PATTERN.finditer(text):
+        add("vote_counts", match.group(1))
+    for match in RATIO_PATTERN.finditer(text):
+        context = _clause(text, match.start(), match.end())
+        if any(marker in context for marker in RATIO_CONTEXT) and not any(
+            protector in context for protector in RATIO_PROTECTORS
+        ):
+            add("ownership_ratios", match.group(1))
+    for match in MONEY_PATTERN.finditer(text):
+        context = _clause(text, match.start(), match.end())
+        if any(marker in context for marker in SERVICE_FEE_CONTEXT):
+            add("service_fees", match.group(0))
+        elif any(marker in context for marker in OTHER_AMOUNT_CONTEXT):
+            add("other_amounts", match.group(0))
+    for match in TERM_PATTERN.finditer(text):
+        add("service_terms", match.group(1))
+    for match in FUND_REGISTRATION_PATTERN.finditer(text):
+        add("fund_manager_registration_numbers", match.group(1))
+    for match in REGISTRATION_NUMBER_PATTERN.finditer(text):
+        add("registration_numbers", match.group(1))
+    for match in CASE_NUMBER_PATTERN.finditer(text):
+        add("case_numbers", match.group(1))
+    for match in CONTRACT_NUMBER_PATTERN.finditer(text):
+        add("contract_numbers", match.group(1))
+    for match in PHONE_PATTERN.finditer(text):
+        context = _line(text, match.start(), match.end())
+        if "律师" in context:
+            add("lawyer_phones", match.group(1))
+        add("phones", match.group(1))
+    for match in LANDLINE_PATTERN.finditer(text):
+        add("phones", match.group(1))
+    for match in EMAIL_PATTERN.finditer(text):
+        add("emails", match.group(1))
+    for match in IDENTITY_CONTEXT_PATTERN.finditer(text):
+        add("identity_numbers", match.group(1))
+    for match in IDENTITY_NUMBER_PATTERN.finditer(text):
+        add("identity_numbers", match.group(1).upper())
+    for match in IDENTITY_15_PATTERN.finditer(text):
+        add("identity_numbers", match.group(1))
+    for match in UNIFIED_SOCIAL_CREDIT_PATTERN.finditer(text):
+        if is_valid_unified_social_credit_code(match.group(0)):
+            add("unified_social_credit_codes", match.group(0))
+    for match in BANK_ACCOUNT_PATTERN.finditer(text):
+        add("bank_accounts", re.sub(r"[- ]", "", match.group(1)))
 
     return {
         "profile": profile,
@@ -388,6 +525,139 @@ def extract_safe_docx_text_slices(
     if stack:
         errors.add("docx_xml_token_structure_error")
     return paragraphs, sorted(errors)
+
+
+@dataclass(frozen=True)
+class DocxTextUnit:
+    """A paragraph plus safe table coordinates; raw XML offsets stay in slices."""
+
+    paragraph_index: int
+    slices: tuple[XmlTextSlice, ...]
+    table_index: int | None = None
+    row_index: int | None = None
+    cell_index: int | None = None
+    part_scope: str | None = None
+    table_id: str | None = None
+
+    @property
+    def logical_text(self) -> str:
+        return "".join(item.text for item in self.slices)
+
+    @property
+    def text_slices(self) -> tuple[XmlTextSlice, ...]:
+        return self.slices
+
+
+def extract_safe_docx_text_units(
+    document_xml: bytes,
+    excluded_ancestors: set[str],
+    required_ancestor: str | None = "body",
+    *,
+    part_scope: str | None = None,
+    table_ids: list[str] | None = None,
+) -> tuple[list[DocxTextUnit], dict[str, int], list[str]]:
+    """Attach table row/cell coordinates to the existing byte-safe text slices."""
+    paragraphs, errors = extract_safe_docx_text_slices(
+        document_xml,
+        excluded_ancestors,
+        required_ancestor,
+    )
+    root = ElementTree.fromstring(document_xml)
+    contexts: list[tuple[int | None, int | None, int | None]] = []
+    next_table = 0
+    row_next: dict[int, int] = {}
+    cell_next: dict[tuple[int, int], int] = {}
+
+    def safe_text_exists(element: ElementTree.Element, ancestors: tuple[str, ...]) -> bool:
+        name = element.tag.rsplit("}", 1)[-1]
+        current = ancestors + (name,)
+        if (
+            name == "t"
+            and element.text
+            and (required_ancestor is None or required_ancestor in ancestors)
+            and "p" in ancestors
+            and "r" in ancestors
+            and not excluded_ancestors.intersection(ancestors)
+        ):
+            return True
+        return any(safe_text_exists(child, current) for child in element)
+
+    def walk(
+        element: ElementTree.Element,
+        ancestors: tuple[str, ...] = (),
+        tables: tuple[int, ...] = (),
+        rows: tuple[int, ...] = (),
+        cells: tuple[int, ...] = (),
+    ) -> None:
+        nonlocal next_table
+        name = element.tag.rsplit("}", 1)[-1]
+        current = ancestors + (name,)
+        current_tables = tables
+        current_rows = rows
+        current_cells = cells
+        if name == "tbl":
+            table_index = next_table
+            next_table += 1
+            row_next[table_index] = 0
+            current_tables = tables + (table_index,)
+        elif name == "tr" and tables:
+            table_index = tables[-1]
+            row_index = row_next.get(table_index, 0)
+            row_next[table_index] = row_index + 1
+            cell_next[(table_index, row_index)] = 0
+            current_rows = rows + (row_index,)
+        elif name == "tc" and tables and rows:
+            key = (tables[-1], rows[-1])
+            cell_index = cell_next.get(key, 0)
+            cell_next[key] = cell_index + 1
+            current_cells = cells + (cell_index,)
+
+        required_present = required_ancestor is None or required_ancestor in ancestors
+        if (
+            name == "p"
+            and required_present
+            and not excluded_ancestors.intersection(ancestors)
+            and safe_text_exists(element, ancestors)
+        ):
+            contexts.append(
+                (
+                    current_tables[-1] if current_tables else None,
+                    current_rows[-1] if current_rows else None,
+                    current_cells[-1] if current_cells else None,
+                )
+            )
+        for child in element:
+            walk(child, current, current_tables, current_rows, current_cells)
+
+    walk(root)
+    if len(contexts) != len(paragraphs):
+        errors = sorted(set(errors) | {"docx_text_unit_context_mismatch"})
+    units: list[DocxTextUnit] = []
+    for index, slices in enumerate(paragraphs):
+        table_index, row_index, cell_index = contexts[index] if index < len(contexts) else (None, None, None)
+        units.append(
+            DocxTextUnit(
+                paragraph_index=index,
+                slices=tuple(slices),
+                table_index=table_index,
+                row_index=row_index,
+                cell_index=cell_index,
+                part_scope=part_scope,
+                table_id=(
+                    table_ids[table_index]
+                    if table_index is not None and table_ids and table_index < len(table_ids)
+                    else None
+                ),
+            )
+        )
+    coverage = {
+        "text_units": len(units),
+        "text_nodes": sum(len(unit.slices) for unit in units),
+        "tables": len({unit.table_index for unit in units if unit.table_index is not None}),
+        "rows": len({(unit.table_index, unit.row_index) for unit in units if unit.table_index is not None}),
+        "cells": len({(unit.table_index, unit.row_index, unit.cell_index) for unit in units if unit.table_index is not None}),
+    }
+    return units, coverage, errors
 
 
 def apply_byte_patches(data: bytes, patches: list[tuple[int, int, bytes]]) -> bytes:

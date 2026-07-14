@@ -7,12 +7,12 @@ description: Run a local-only, browser-guided redaction workflow for one explici
 
 ## 维护信息
 
-- 作者：Yingchao Yang（杨颖超）
-- 版本号：v1.1.1
-- 状态：公开发行候选版本；本地浏览器安全壳 + 确定性 Tool + 律师确认
+- 作者：Yingchao Yang（杨颖超律师）
+- 版本号：v1.2.0
+- 状态：公开发行候选 v1.2.0；Mac Word 正式验证边界保持不变；本地安全壳 + 确定性 Tool + 律师确认
 - 创建日期：2026-07-08
-- 最近更新日期：2026-07-13
-- 许可：本 Skill 自有代码按仓库 Apache License 2.0 发布；第三方依赖按其原始许可，见插件根目录 `../../THIRD_PARTY_NOTICES.md`。
+- 最近更新日期：2026-07-14
+- 许可：本 Skill 自有代码按 Apache License 2.0 发布；第三方依赖按其原始许可，见插件根目录 `../../THIRD_PARTY_NOTICES.md`。
 - 引用：复制、迁移或衍生使用时保留作者、版本、日期和许可声明。
 
 ## 何时使用
@@ -32,7 +32,7 @@ description: Run a local-only, browser-guided redaction workflow for one explici
 
 1. 原件不动：不覆盖、不移动、不删除、不重命名原件；输出只写新目录。
 2. 本地运行：不联网、不调用云端 OCR 或外部 API；真实正文不得复制到对话。
-3. 人工确认：候选不自动生效，修订、批注和敏感表格必须在本地页面明确确认。
+3. 人工确认：候选默认不自动生效；手机号、邮箱、通过校验的居民身份证号和统一社会信用代码只有在本地页面明确开启并确认后才可自动处理，姓名、主体、地址、项目和数字变量仍须逐项确认。
 4. 报告不泄密：reports 只含 safe ID、状态、数量、安全错误码和残留统计。
 5. 映射短生命周期：occurrence ID 与原始区段只保存在进程内存；不得写入 reports。
 6. Word 失败关闭：`legal-template` DOCX 必须通过 OOXML 静态校验和 Microsoft Word 原生打开；关闭后须确认目标 safe ID 已离开 Word 文档列表、锁文件和暂存件均已消失，LibreOffice 不能替代。
@@ -62,7 +62,9 @@ Codex 不读取：
 
 启动文件优先使用已同步的 `~/.codex/skills/local-redaction-assistant` runtime；runtime 尚未同步时回退到当前仓库源版本，并优先使用 Codex bundled Python。网页只绑定 `127.0.0.1`，一次处理一份 DOCX、PDF 或图片；上传文件进入本次临时工作区，完成后由网页下载安全编号副本，服务退出时清理临时工作区。网页本身不向 OneDrive 写出文件，也不调用网络服务。
 
-网页 DOCX `ai-share` 流程使用现有确定性 Tool；`legal-template` 仍要求 Microsoft Word for Mac 原生清洁与验证。启动文件会优先选择含 `PyMuPDF` 的 Codex bundled Python；如果 bundled Python 缺少该依赖，会自动切换到本机 PDF 专用环境。Windows 可以启动网页和处理普通 `ai-share` DOCX、PDF/图片视觉副本，但 v1.1.1 不把 Windows Word 自动化验证宣称为已实现。
+网页 DOCX `ai-share` 流程使用 v1.2.0 统一正文索引，逐段落、逐表格行和逐单元格扫描；可在本地会话导入 JSON 词典，并在明确开启后处理高置信格式项。`legal-template` 仍要求 Microsoft Word for Mac 原生清洁与验证。启动文件会优先选择含 `PyMuPDF` 的 Codex bundled Python；如果 bundled Python 缺少该依赖，会自动切换到本机 PDF 专用环境。Windows 可以启动网页和处理普通 `ai-share` DOCX、PDF/图片视觉副本，但本版本不把 Windows Word 自动化验证宣称为已实现。
+
+v1.2.0 的 DOCX 表格扫描只覆盖正文表格的安全 `w:t` 文本；支持合并单元格、多段落、跨 run 文本和同一行标签—值关系。文本框、图片、OLE、嵌入对象和复杂域代码仍只进入人工复核。网页显示扫描覆盖统计；任一支持范围扫描失败时不生成成功结果。示例词典为 `configs/redaction_dictionary.example.json`，用户本地词典应命名为 `redaction_dictionary.local.json`，只在当前会话导入，不写入报告、runtime 或发布包。
 
 单文件日常入口：
 

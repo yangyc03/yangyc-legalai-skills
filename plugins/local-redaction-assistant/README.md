@@ -1,13 +1,20 @@
 # Local Redaction Assistant
 
-公开发行候选版本：`1.1.1-beta`。
+公开发行候选版本：`1.2.0`。
 
 这是一个本机优先的浏览器界面，用于处理律师明确选取的脱敏副本：
 
-- DOCX：普通 AI 共享副本；在 Mac 上可选法律模板提炼流程；
+- DOCX：普通 AI 共享副本；正文表格逐单元格扫描；在 Mac 上可选法律模板提炼流程；
 - PDF 和图片：本地人工区域脱敏，生成图片型视觉副本；
 - 网页提供上传、确认、生成和下载按钮；原件不覆盖；
 - 服务只绑定 `127.0.0.1`，不调用云端 OCR、外部 API 或网络服务。
+
+v1.2.0 新增：
+
+- DOCX 正文表格支持合并单元格、多段落和跨 run 文本扫描；
+- 支持当前会话导入 `redaction_dictionary.local.json`，不写入报告或发行包；
+- 手机号、邮箱、有效身份证号和有效统一社会信用代码只有在用户明确开启后才自动处理；
+- 姓名、主体、地址、项目、金额、日期和比例等仍需人工确认。
 
 ## 适用边界
 
@@ -36,6 +43,7 @@
 
 - Mac 的 `legal-template` 流程需要 Microsoft Word for Mac；
 - Windows 可启动网页并处理普通 DOCX、PDF/图片视觉副本，但本候选版本不宣称支持 Windows Word 原生自动化验证。
+- DOCX 词典格式模板见 `skills/local-redaction-assistant/configs/redaction_dictionary.example.json`。
 
 PyMuPDF 不包含在本插件中。安装前请阅读其许可和适用条件，见 `THIRD_PARTY_NOTICES.md`。
 
