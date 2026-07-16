@@ -10,7 +10,7 @@
 
 运行环境与缓存使用用户本地数据目录，不写入 Skill 目录或案件目录。配置只保存能力、程序路径、归档规则和模板描述，不保存客户资料、案件路径、项目数据、密码或密钥。
 
-`setup --apply` 返回的 `venv_python` 是本 Skill 的独立 Python。Agent 或用户应使用它运行后续 `doctor`、`configure` 和归档命令；导入 Skill 本身不会改变 WorkBuddy、Codex 或其他 Agent 的系统 Python。
+`setup --apply` 返回的 `venv_python` 是本 Skill 的独立 Python。Agent 或用户应使用它运行后续 `doctor`、`configure` 和归档命令；导入 Skill 本身不会改变 WorkBuddy、Codex 或其他 Agent 的系统 Python。`enabled_layers` 和 `policies` 是实际执行边界，不是展示字段；未启用的可选程序即使已安装也不得调用。
 
 ## 必填配置
 
@@ -42,6 +42,6 @@
 
 ## OCR 与视觉策略
 
-- OCR 只在明确启用并需要处理扫描件时使用；结果是待校对线索，不自动成为案件事实。
-- 自动视觉核验需要 Poppler。缺少时技术处理可以继续，但必须保留人工视觉复核状态。
+- `0.1.0-beta` 的 OCR 层只检测 Tesseract 并记录用户管理的本地 OCR 策略；归档 Tool 不自动执行 OCR。外部本地 OCR 结果是待校对线索，不自动成为案件事实。
+- 自动视觉核验需要同时启用 `visual` 层、选择 `automatic_when_available` 并检测到 Poppler。缺少或未启用时技术处理可以继续，但必须保留人工视觉复核状态。
 - qpdf、Ghostscript 和 Tesseract 均为按需能力，不应成为基础 PDF 流程的强制依赖。

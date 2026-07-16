@@ -1,13 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "prepared_manifest.schema.json",
-  "type": "object", "required": ["schema_version", "status", "profile", "matter_id", "run_dir", "template_mode", "plan_path", "plan_sha256", "converted_items", "sections", "body_page_count", "front_matter_preview", "final_confirmation_token"],
+  "type": "object", "required": ["schema_version", "status", "profile", "matter_id", "run_dir", "source_roots", "output_root", "execution_policy", "template_mode", "plan_path", "plan_sha256", "converted_items", "sections", "body_page_count", "front_matter_preview", "page_number_policy", "final_confirmation_token"],
   "properties": {
     "schema_version": {"const": "1.0"}, "status": {"const": "prepared"},
     "profile": {"type": "string"}, "matter_id": {"type": "string"}, "run_dir": {"type": "string"},
+    "source_roots": {"type": "array"}, "output_root": {"type": "string"}, "execution_policy": {"type": "object"},
     "template_mode": {"enum": ["pdf", "docx"]}, "plan_path": {"type": "string"},
     "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "converted_items": {"type": "array"}, "sections": {"type": "array"},
     "body_page_count": {"type": "integer", "minimum": 1}, "front_matter_preview": {"type": "object"},
+    "page_number_policy": {"enum": ["overlay", "overlay_bottom_right", "keep_confirmed"]},
     "final_confirmation_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }
 }

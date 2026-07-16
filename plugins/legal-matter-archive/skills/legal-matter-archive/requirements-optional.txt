@@ -4,5 +4,6 @@ lxml>=5,<7
 # Image input layer
 Pillow>=10,<13
 
-# LibreOffice, Poppler, qpdf, Ghostscript and Tesseract are optional system programs.
+# LibreOffice, Poppler, qpdf and Ghostscript are optional system programs.
+# Tesseract is detected for user-managed local OCR preprocessing and is not invoked automatically in 0.1.0-beta.
 # See references/local-configuration.md and THIRD_PARTY_NOTICES.md.

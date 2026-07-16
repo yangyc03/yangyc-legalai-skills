@@ -970,6 +970,28 @@ def parse_layers(raw: str | None) -> list[str]:
     return sorted(requested)
 
 
+def normalize_capability_settings(candidate: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    raw_layers = candidate.get("enabled_layers", ["core"])
+    if not isinstance(raw_layers, list):
+        raise ValueError("enabled_layers 必须是数组")
+    layers = parse_layers(",".join(str(item) for item in raw_layers))
+    raw_policies = candidate.get("policies") or {}
+    if not isinstance(raw_policies, dict):
+        raise ValueError("policies 必须是对象")
+    policies = {
+        "visual_verification": str(raw_policies.get("visual_verification", "automatic_when_available")),
+        "ocr": str(raw_policies.get("ocr", "disabled")),
+        "encrypted_pdf": str(raw_policies.get("encrypted_pdf", "printable_permissions_only")),
+    }
+    if policies["visual_verification"] not in {"automatic_when_available", "manual_only"}:
+        raise ValueError("policies.visual_verification 不受支持")
+    if policies["ocr"] not in {"disabled", "local_only"}:
+        raise ValueError("policies.ocr 不受支持")
+    if policies["encrypted_pdf"] not in {"block_all", "printable_permissions_only"}:
+        raise ValueError("policies.encrypted_pdf 不受支持")
+    return layers, policies
+
+
 def setup_plan(layers: list[str], include_system: bool) -> dict[str, Any]:
     packages = sorted({package for layer in layers for package in PYTHON_LAYER_PACKAGES.get(layer, [])})
     data_dir = default_data_dir()
@@ -1074,32 +1096,22 @@ def template_check(mode: str, cover: Path, directory: Path,
 def normalize_local_config(candidate: dict[str, Any], *, validate_templates: bool) -> tuple[dict[str, Any], list[str]]:
     if candidate.get("config_schema_version") != CONFIG_SCHEMA_VERSION:
         raise ValueError(f"config_schema_version 必须为 {CONFIG_SCHEMA_VERSION}")
-    layers = parse_layers(",".join(str(item) for item in candidate.get("enabled_layers", ["core"])))
-    raw_policies = candidate.get("policies") or {}
-    if not isinstance(raw_policies, dict):
-        raise ValueError("policies 必须是对象")
-    policies = {
-        "visual_verification": str(raw_policies.get("visual_verification", "automatic_when_available")),
-        "ocr": str(raw_policies.get("ocr", "disabled")),
-        "encrypted_pdf": str(raw_policies.get("encrypted_pdf", "printable_permissions_only")),
-    }
-    if policies["visual_verification"] not in {"automatic_when_available", "manual_only"}:
-        raise ValueError("policies.visual_verification 不受支持")
-    if policies["ocr"] not in {"disabled", "local_only"}:
-        raise ValueError("policies.ocr 不受支持")
-    if policies["encrypted_pdf"] not in {"block_all", "printable_permissions_only"}:
-        raise ValueError("policies.encrypted_pdf 不受支持")
+    layers, policies = normalize_capability_settings(candidate)
     profiles = candidate.get("profiles")
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError("profiles 必须至少配置一种归档类型")
     normalized_profiles: dict[str, Any] = {}
     blockers: list[str] = []
+    if policies["ocr"] == "local_only" and "ocr" not in layers:
+        blockers.append("policies.ocr=local_only 时必须启用 ocr 功能层")
     for profile, raw in profiles.items():
         if profile not in PROFILES or not isinstance(raw, dict):
             raise ValueError(f"无效归档 profile：{profile}")
         mode = str(raw.get("template_mode", ""))
         if mode not in {"pdf", "docx"}:
             raise ValueError(f"{profile}.template_mode 仅支持 pdf 或 docx")
+        if mode == "docx" and "docx" not in layers:
+            blockers.append(f"{profile} 使用 DOCX 模板时必须启用 docx 功能层")
         rule = Path(str((raw.get("rule") or {}).get("path", ""))).expanduser()
         cover_raw = raw.get("cover") or {}
         directory_raw = raw.get("directory") or {}
@@ -1120,6 +1132,9 @@ def normalize_local_config(candidate: dict[str, Any], *, validate_templates: boo
                 blockers.append(f"{profile} 模板检查等待安装可选依赖：{exc}")
         else:
             check = {"status": "deferred", "reason": "未加载可选处理依赖"}
+        ocr_enabled = bool(raw.get("ocr_enabled", False))
+        if ocr_enabled and ("ocr" not in layers or policies["ocr"] != "local_only"):
+            blockers.append(f"{profile}.ocr_enabled=true 时必须启用 ocr 功能层并设置 policies.ocr=local_only")
         normalized_profiles[profile] = {
             "template_mode": mode,
             "rule": {"path": str(rule.resolve()), "sha256": sha256_file(rule)},
@@ -1127,7 +1142,7 @@ def normalize_local_config(candidate: dict[str, Any], *, validate_templates: boo
                       "expected_pages": cover_pages},
             "directory": {"path": str(directory.resolve()), "sha256": sha256_file(directory),
                           "expected_pages": directory_pages},
-            "ocr_enabled": bool(raw.get("ocr_enabled", False)),
+            "ocr_enabled": ocr_enabled,
             "template_check": check,
         }
     report = dependency_report()
@@ -1614,6 +1629,18 @@ def normalize_public_request(request: dict[str, Any], config: dict[str, Any]) ->
     source_roots = request.get("source_roots")
     if source_roots is None and request.get("source_root") is not None:
         source_roots = [request.get("source_root")]
+    enabled_layers, policies = normalize_capability_settings(config)
+    execution_policy = {
+        "enabled_layers": enabled_layers,
+        "policies": policies,
+        "profile_ocr_enabled": bool(profile_config.get("ocr_enabled", False)),
+    }
+    execution_policy["fingerprint"] = digest({
+        "config_schema_version": config.get("config_schema_version"),
+        "profile": profile,
+        "profile_config": profile_config,
+        "execution_policy": execution_policy,
+    })
     return {
         "schema_version": SCHEMA_VERSION,
         "profile": profile,
@@ -1653,9 +1680,11 @@ def normalize_public_request(request: dict[str, Any], config: dict[str, Any]) ->
         "directory_groups_confirmed": confirmations.get("directory_confirmed") is True,
         "missing_material_disposition": deepcopy(request.get("missing_material_disposition")),
         "pending_decisions": deepcopy(request.get("pending_decisions") or []),
+        "execution_policy": execution_policy,
         "config_snapshot": {
             "config_schema_version": config.get("config_schema_version"), "profile": profile,
             "profile_fingerprint": digest(profile_config),
+            "execution_policy_fingerprint": execution_policy["fingerprint"],
         },
     }
 
@@ -1670,6 +1699,9 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
         for error in validate_json_schema_value(public_request, request_schema, request_schema)
     )
     request = normalize_public_request(public_request, config)
+    execution_policy = request["execution_policy"]
+    enabled_layers = set(execution_policy["enabled_layers"])
+    policies = execution_policy["policies"]
     if request.get("schema_version") != SCHEMA_VERSION:
         blockers.append(f"archive request schema_version 必须为 {SCHEMA_VERSION}")
     profile = str(request.get("profile", ""))
@@ -1778,8 +1810,11 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
     dependencies = dependency_report()
     if not dependencies["capabilities"]["core"]:
         blockers.append("缺少基础 PDF 依赖 pypdf 或 reportlab")
-    if template_mode == "docx" and not dependencies["capabilities"]["docx"]:
-        blockers.append("DOCX 模板模式缺少 lxml 或 LibreOffice")
+    if template_mode == "docx":
+        if "docx" not in enabled_layers:
+            blockers.append("DOCX 模板模式未在配置中启用 docx 功能层")
+        elif not dependencies["capabilities"]["docx"]:
+            blockers.append("DOCX 模板模式缺少 lxml 或 LibreOffice")
     policy = request.get("page_number_policy")
     if policy not in {"overlay", "overlay_bottom_right", "keep_confirmed"}:
         blockers.append("page_number_policy 必须为 overlay、overlay_bottom_right 或 keep_confirmed")
@@ -1826,10 +1861,16 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
                     items.append(item)
 
     included = [item for item in items if item["include"]]
-    if any(item["source_snapshot"].get("kind") == "image" for item in included) and not dependencies["capabilities"]["image"]:
-        blockers.append("归档材料包含图片，但未启用 Pillow 图像能力")
-    if any(item["source_snapshot"].get("kind") == "office" for item in included) and not dependencies["binaries"].get("soffice"):
-        blockers.append("归档材料包含 Office 文件，但缺少 LibreOffice")
+    if any(item["source_snapshot"].get("kind") == "image" for item in included):
+        if "image" not in enabled_layers:
+            blockers.append("归档材料包含图片，但配置未启用 image 功能层")
+        elif not dependencies["capabilities"]["image"]:
+            blockers.append("归档材料包含图片，但缺少 Pillow 图像能力")
+    if any(item["source_snapshot"].get("kind") == "office" for item in included):
+        if "docx" not in enabled_layers:
+            blockers.append("归档材料包含 Office 文件，但配置未启用 docx 功能层")
+        elif not dependencies["binaries"].get("soffice"):
+            blockers.append("归档材料包含 Office 文件，但缺少 LibreOffice")
     included_paths = {item["source"] for item in included}
     primary_agreement = engagement.get("primary_agreement")
     if primary_agreement and primary_agreement["path"] not in included_paths:
@@ -1843,7 +1884,11 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
         if item["source_snapshot"].get("pdf_security", {}).get("print_conversion_required")
     ]
     if printable_encrypted:
-        if not dependencies["binaries"].get("gs"):
+        if policies["encrypted_pdf"] == "block_all":
+            blockers.append("本地策略禁止处理任何加密 PDF")
+        elif "encrypted-pdf" not in enabled_layers:
+            blockers.append("归档材料包含允许打印的权限型加密 PDF，但配置未启用 encrypted-pdf 功能层")
+        elif not dependencies["binaries"].get("gs"):
             blockers.append("缺少 Ghostscript/gs，无法为允许打印的权限型加密 PDF 生成派生副本")
         else:
             risks.extend(
@@ -1908,6 +1953,20 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
                                 "category": item["category"],
                             }
                             risks.append("律师确认在必备材料缺失情况下以缺失说明继续归档；目录和小结必须披露该缺失")
+
+    inventory_paths = set(inventory_map)
+    decided_paths = {item["source"] for item in items}
+    unreviewed_inventory = sorted(inventory_paths - decided_paths)
+    if unreviewed_inventory:
+        blockers.append("材料包存在尚未明确纳入或排除的文件：" + "、".join(unreviewed_inventory))
+    out_of_scope_items = sorted(
+        item["source"] for item in items
+        if not any(is_within(resolve_inside(root, item["source"], "item source", must_exist=True), source) for source in sources)
+    )
+    if out_of_scope_items:
+        blockers.append("items 或 exclusions 引用了 source_roots 之外的文件：" + "、".join(out_of_scope_items))
+    if execution_policy.get("profile_ocr_enabled"):
+        risks.append("0.1.0-beta 仅检测本地 Tesseract 并记录 OCR 策略；归档 Tool 不自动执行 OCR，OCR 结果须在外部本地流程中逐项校对")
 
     orders = [item.get("order") for item in included]
     if len(orders) != len(set(orders)):
@@ -1997,6 +2056,8 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
         "output_root": relative(root, output),
         "source_roots": [relative(root, path) for path in sources],
         "package_inventory": inventory,
+        "unreviewed_inventory": unreviewed_inventory,
+        "out_of_scope_items": out_of_scope_items,
         "engagement_source_snapshot": engagement_source_snapshot,
         "items": included,
         "directory_groups": directory_groups,
@@ -2015,6 +2076,7 @@ def build_plan(root: Path, request_path: Path, public_request: dict[str, Any], c
             "directory": {"path": str(directory_path) if directory_path else "", "snapshot": directory_snapshot},
         },
         "template_mode": template_mode,
+        "execution_policy": execution_policy,
         "config_snapshot": request.get("config_snapshot", {}),
         "cover_fields": cover_fields,
         "cover_completion": cover_completion,
@@ -2252,12 +2314,14 @@ def ghostscript_print_pdf(source: Path, target: Path) -> str:
     return f"Ghostscript {version or 'unknown'} print-to-PDF"
 
 
-def convert_to_pdf(source: Path, target: Path) -> tuple[int, str]:
+def convert_to_pdf(source: Path, target: Path, *, allow_encrypted_pdf: bool = False) -> tuple[int, str]:
     target.parent.mkdir(parents=True, exist_ok=True)
     suffix = source.suffix.lower()
     if suffix == ".pdf":
         security = pdf_security_profile(source)
         if security["encrypted"]:
+            if not allow_encrypted_pdf:
+                raise RuntimeError("当前执行策略未启用可打印权限型加密 PDF 处理")
             engine = ghostscript_print_pdf(source, target)
         else:
             shutil.copy2(source, target)
@@ -2276,7 +2340,7 @@ def convert_to_pdf(source: Path, target: Path) -> tuple[int, str]:
     return validate_pdf(target), engine
 
 
-def merge_pdfs(sources: list[Path], target: Path) -> int:
+def merge_pdfs(sources: list[Path], target: Path, *, allow_qpdf: bool = False) -> int:
     if target.exists():
         raise RuntimeError(f"合并目标已存在，禁止覆盖：{target}")
     total = 0
@@ -2297,6 +2361,8 @@ def merge_pdfs(sources: list[Path], target: Path) -> int:
         return actual
     except Exception as primary_error:  # noqa: BLE001 - qpdf is the explicit compatibility fallback
         target.unlink(missing_ok=True)
+        if not allow_qpdf:
+            raise RuntimeError(f"pypdf 合并失败；当前执行策略未启用 qpdf 兼容层：{primary_error}") from primary_error
         binary = discover_binary("qpdf")
         if not binary:
             raise RuntimeError(f"pypdf 合并失败；请启用 qpdf 兼容层：{primary_error}") from primary_error
@@ -2313,11 +2379,11 @@ def merge_pdfs(sources: list[Path], target: Path) -> int:
     return actual
 
 
-def normalize_pdf_resources(path: Path) -> None:
-    if not discover_binary("qpdf"):
+def normalize_pdf_resources(path: Path, *, allow_qpdf: bool = False) -> None:
+    if not allow_qpdf or not discover_binary("qpdf"):
         return
     normalized = path.with_name(f"{path.stem}.qpdf-normalized.pdf")
-    merge_pdfs([path], normalized)
+    merge_pdfs([path], normalized, allow_qpdf=True)
     os.replace(normalized, path)
 
 
@@ -2361,6 +2427,14 @@ def prepare_archive(root: Path, plan_path: Path, plan: dict[str, Any], confirm: 
     if sha256_file(request_path) != plan["request_sha256"]:
         raise RuntimeError("archive request 自预览后已变化")
     run_dir = resolve_inside(root, plan["run_dir"], "run_dir", must_exist=True)
+    execution_policy = plan.get("execution_policy") or {}
+    enabled_layers = set(execution_policy.get("enabled_layers", []))
+    policies = execution_policy.get("policies") or {}
+    allow_qpdf = "pdf-compat" in enabled_layers
+    allow_encrypted_pdf = (
+        "encrypted-pdf" in enabled_layers
+        and policies.get("encrypted_pdf") == "printable_permissions_only"
+    )
     detect_incomplete_transactions(run_dir, "prepare")
     for name in ["10_converted", "20_numbered-items", "50_manifest"]:
         if (run_dir / name).exists():
@@ -2388,7 +2462,7 @@ def prepare_archive(root: Path, plan_path: Path, plan: dict[str, Any], confirm: 
                 raise RuntimeError(f"源文件自预览后已变化：{item['source']}")
             name = f"{index:03d}-{safe_slug(item['display_name'])}.pdf"
             target = converted_dir / name
-            pages, engine = convert_to_pdf(source, target)
+            pages, engine = convert_to_pdf(source, target, allow_encrypted_pdf=allow_encrypted_pdf)
             entry = {
                 "source": item["source"], "source_sha256": item["source_snapshot"]["sha256"],
                 "converted": f"{plan['run_dir']}/10_converted/{name}", "converted_sha256": sha256_file(target),
@@ -2411,7 +2485,7 @@ def prepare_archive(root: Path, plan_path: Path, plan: dict[str, Any], confirm: 
             filename = f"{sequence:03d}-{safe_slug(label)}.pdf"
             member_paths = [temp_root / Path(item["converted"]).relative_to(plan["run_dir"]) for item in members]
             section_target = unpaginated_dir / filename
-            pages = merge_pdfs(member_paths, section_target)
+            pages = merge_pdfs(member_paths, section_target, allow_qpdf=allow_qpdf)
             logical_end = logical_start + pages - 1
             sections.append({
                 "sequence": sequence, "group_id": group["group_id"], "name": label, "category": group["category"],
@@ -2465,7 +2539,7 @@ def prepare_archive(root: Path, plan_path: Path, plan: dict[str, Any], confirm: 
             if cover_preview_pdf.name != "cover.pdf":
                 os.replace(cover_preview_pdf, preview_front / "cover.pdf")
                 cover_preview_pdf = preview_front / "cover.pdf"
-            normalize_pdf_resources(cover_preview_pdf)
+            normalize_pdf_resources(cover_preview_pdf, allow_qpdf=allow_qpdf)
             cover_pages = validate_pdf(cover_preview_pdf)
             expected_cover_pages = int((plan.get("cover_render") or {}).get("expected_pages", 0))
             if cover_pages != expected_cover_pages:
@@ -2476,7 +2550,7 @@ def prepare_archive(root: Path, plan_path: Path, plan: dict[str, Any], confirm: 
             if directory_preview_pdf.name != "directory.pdf":
                 os.replace(directory_preview_pdf, preview_front / "directory.pdf")
                 directory_preview_pdf = preview_front / "directory.pdf"
-            normalize_pdf_resources(directory_preview_pdf)
+            normalize_pdf_resources(directory_preview_pdf, allow_qpdf=allow_qpdf)
             directory_pages = validate_pdf(directory_preview_pdf)
             validate_directory_rendered_values(directory_preview_pdf, sections)
             directory_layout = inspect_directory_layout(directory_preview_pdf, sections)
@@ -2488,6 +2562,8 @@ def prepare_archive(root: Path, plan_path: Path, plan: dict[str, Any], confirm: 
             "engagement": plan["engagement"], "internal_close": plan["internal_close"],
             "court_or_tribunal_disposition": plan.get("court_or_tribunal_disposition", {}),
             "plan_path": relative(root, plan_path), "plan_sha256": sha256_file(plan_path),
+            "source_roots": plan["source_roots"], "output_root": plan["output_root"],
+            "execution_policy": execution_policy,
             "engagement_source_snapshot": plan["engagement_source_snapshot"], "converted_items": converted_entries,
             "sections": sections, "body_page_count": body_page_count,
             "template_mode": template_mode,
@@ -3059,6 +3135,8 @@ def finalize_archive(
     if failures:
         raise RuntimeError("；".join(failures))
     run_dir = resolve_inside(root, prepared["run_dir"], "run_dir", must_exist=True)
+    execution_policy = prepared.get("execution_policy") or {}
+    allow_qpdf = "pdf-compat" in set(execution_policy.get("enabled_layers", []))
     ensure_run_active(run_dir)
     detect_incomplete_transactions(run_dir, "finalize")
     front_dir = run_dir / "30_front-matter"
@@ -3155,13 +3233,20 @@ def finalize_archive(
             })
 
         final_pdf = temp_final / "matter-archive.pdf"
-        final_pages = merge_pdfs([cover_pdf, directory_pdf] + [temp_numbered / Path(item["numbered"]).name for item in numbered_sections], final_pdf)
+        final_pages = merge_pdfs(
+            [cover_pdf, directory_pdf] + [temp_numbered / Path(item["numbered"]).name for item in numbered_sections],
+            final_pdf,
+            allow_qpdf=allow_qpdf,
+        )
         expected_pages = cover_pages + directory_pages + prepared["body_page_count"]
         if final_pages != expected_pages:
             raise RuntimeError("最终卷宗页数与封皮、目录和正文之和不一致")
-        number_failures = verify_logical_page_numbers(final_pdf, cover_pages + directory_pages + 1, prepared["body_page_count"])
-        if number_failures:
-            raise RuntimeError("最终卷宗连续页码缺失或错位：" + "、".join(map(str, number_failures[:20])))
+        if prepared["page_number_policy"] != "keep_confirmed":
+            number_failures = verify_logical_page_numbers(
+                final_pdf, cover_pages + directory_pages + 1, prepared["body_page_count"],
+            )
+            if number_failures:
+                raise RuntimeError("最终卷宗连续页码缺失或错位：" + "、".join(map(str, number_failures[:20])))
 
         promote_directory(temp_front, front_dir, promoted_directories)
         promote_directory(temp_numbered, numbered_dir, promoted_directories)
@@ -3172,6 +3257,8 @@ def finalize_archive(
             "run_disposition": "active",
             "profile": prepared["profile"], "matter_id": prepared["matter_id"],
             "case_numbers": prepared.get("case_numbers", []), "run_dir": prepared["run_dir"],
+            "source_roots": prepared["source_roots"], "output_root": prepared["output_root"],
+            "execution_policy": execution_policy, "page_number_policy": prepared["page_number_policy"],
             "archive_intake": prepared.get("archive_intake", {}),
             "engagement": prepared.get("engagement", {}),
             "internal_close": prepared.get("internal_close", {}),
@@ -3252,6 +3339,15 @@ def verify_archive(root: Path, manifest_path: Path, manifest: dict[str, Any], vi
     validate_schema_document(manifest, "archive_manifest.schema.json", "archive manifest")
     run_dir = resolve_inside(root, manifest["run_dir"], "run_dir", must_exist=True)
     ensure_run_active(run_dir)
+    execution_policy = manifest.get("execution_policy") or {}
+    enabled_layers = set(execution_policy.get("enabled_layers", []))
+    policies = execution_policy.get("policies") or {}
+    automatic_visual_enabled = (
+        "visual" in enabled_layers
+        and policies.get("visual_verification") == "automatic_when_available"
+    )
+    if visual_confirmed and not automatic_visual_enabled:
+        raise RuntimeError("当前配置未启用自动视觉核验，不能提升为 ready_for_oa_submission")
     checks: list[dict[str, Any]] = []
     source_failures = verify_snapshot(root, manifest.get("engagement_source_snapshot", []))
     checks.append({"check": "source_immutability", "ok": not source_failures, "detail": source_failures})
@@ -3269,12 +3365,19 @@ def verify_archive(root: Path, manifest_path: Path, manifest: dict[str, Any], vi
             "ok": sha256_file(path) == section["numbered_sha256"] and validate_pdf(path) == section["page_count"],
             "detail": section["page_range"],
         })
-    logical_failures = verify_logical_page_numbers(
-        final_pdf,
-        manifest["front_matter"]["cover_pages"] + manifest["front_matter"]["directory_pages"] + 1,
-        manifest["body_page_count"],
-    )
-    checks.append({"check": "logical_page_numbers", "ok": not logical_failures, "detail": logical_failures})
+    if manifest.get("page_number_policy") == "keep_confirmed":
+        checks.append({
+            "check": "existing_page_numbers_visual_review",
+            "ok": visual_confirmed,
+            "detail": "已由律师逐页视觉确认" if visual_confirmed else "保留既有页码，等待律师逐页视觉确认",
+        })
+    else:
+        logical_failures = verify_logical_page_numbers(
+            final_pdf,
+            manifest["front_matter"]["cover_pages"] + manifest["front_matter"]["directory_pages"] + 1,
+            manifest["body_page_count"],
+        )
+        checks.append({"check": "logical_page_numbers", "ok": not logical_failures, "detail": logical_failures})
     directory_pdf = resolve_inside(root, manifest["front_matter"]["directory_pdf"], "directory_pdf", must_exist=True)
     if manifest.get("template_mode") == "pdf":
         directory_ok, directory_detail = True, "已填写 PDF 目录由律师在 Gate B 确认"
@@ -3308,7 +3411,13 @@ def verify_archive(root: Path, manifest_path: Path, manifest: dict[str, Any], vi
     if (qa_dir / report_name).exists() or (qa_dir / json_name).exists():
         raise RuntimeError(f"核验输出已存在，禁止覆盖：{report_name}")
     render_dir = qa_dir / ("rendered-visual" if visual_confirmed else "rendered-technical")
-    rendered_paths, render_diagnostics = render_pdf_for_review(final_pdf, render_dir, actual_pages)
+    if automatic_visual_enabled:
+        rendered_paths, render_diagnostics = render_pdf_for_review(final_pdf, render_dir, actual_pages)
+    else:
+        rendered_paths, render_diagnostics = [], {
+            "engine": "",
+            "error": "自动视觉核验未启用；仅可保留人工视觉复核状态",
+        }
     render_ok = len(rendered_paths) == actual_pages and not render_diagnostics.get("error")
     checks.append({"check": "render_pages", "ok": render_ok, "detail": render_diagnostics.get("error") or render_diagnostics.get("engine", "")})
 
@@ -3329,16 +3438,22 @@ def verify_archive(root: Path, manifest_path: Path, manifest: dict[str, Any], vi
     checks.append({"check": "front_cover_render_matches_final_first_page", "ok": cover_match, "detail": cover_match_detail or "一致"})
     technical_ok = all(
         check["ok"] for check in checks
-        if check["check"] not in {"render_pages", "front_cover_render_matches_final_first_page"}
+        if check["check"] not in {
+            "render_pages", "front_cover_render_matches_final_first_page", "existing_page_numbers_visual_review",
+        }
+    )
+    automatic_visual_ok = render_ok and cover_match and (
+        manifest.get("page_number_policy") != "keep_confirmed" or visual_confirmed
     )
 
     if visual_confirmed and not reviewer:
         raise ValueError("确认视觉复核时必须提供 reviewer")
-    if visual_confirmed and not (technical_ok and render_ok):
-        raise RuntimeError("技术检查或渲染未通过，不能确认视觉复核")
+    if visual_confirmed and not (technical_ok and automatic_visual_ok):
+        raise RuntimeError("技术检查或自动视觉核验未全部通过，不能确认视觉复核")
     status = "ready_for_oa_submission" if visual_confirmed else "technical_complete_manual_visual_review_required"
     result = {
         "schema_version": SCHEMA_VERSION, "status": status, "technical_ok": technical_ok,
+        "automatic_visual_ok": automatic_visual_ok,
         "render_ok": render_ok, "rendered_pages": [relative(root, path) for path in rendered_paths],
         "visual_review_confirmed": visual_confirmed, "reviewer": reviewer or "",
         "reviewed_at": datetime.now().isoformat(timespec="seconds") if visual_confirmed else "",
@@ -3352,7 +3467,10 @@ def verify_archive(root: Path, manifest_path: Path, manifest: dict[str, Any], vi
     }
     report = ["# 归档技术与视觉核验", "", f"- 状态：`{status}`", f"- 技术检查：{'通过' if technical_ok else '失败'}", f"- 页面渲染：{'通过' if render_ok else '失败'}", f"- 视觉复核：{'已确认' if visual_confirmed else '待逐页确认'}", "", "## 检查项", ""]
     report.extend(f"- [{'x' if item['ok'] else ' '}] {item['check']}：{item['detail']}" for item in checks)
-    report.extend(["", "本记录只说明卷宗已达到 OA 提交前准备状态；交付到项目结案归档目录必须另行预览、确认并执行。", ""])
+    if status == "ready_for_oa_submission":
+        report.extend(["", "本记录只说明卷宗已达到 OA 提交前准备状态；交付到项目结案归档目录必须另行预览、确认并执行。", ""])
+    else:
+        report.extend(["", "本记录表示技术处理已完成，但尚未达到 OA 提交前准备状态，仍需完成规定的视觉复核。", ""])
     result["verification_report"] = relative(root, qa_dir / report_name)
     validate_schema_document(result, "archive_verification.schema.json", "archive verification")
     write_new_text(qa_dir / report_name, "\n".join(report))
@@ -3375,6 +3493,7 @@ def ready_verification_for_manifest(root: Path, run_dir: Path, manifest_path: Pa
             and value.get("visual_review_confirmed") is True
             and value.get("technical_ok") is True
             and value.get("render_ok") is True
+            and value.get("automatic_visual_ok") is True
             and value.get("archive_manifest") == relative(root, manifest_path)
             and value.get("archive_manifest_sha256") == manifest_hash
         ):
@@ -3393,12 +3512,13 @@ def delivery_target(root: Path, manifest: dict[str, Any], destination: str, file
     run_dir = resolve_inside(root, manifest["run_dir"], "run_dir", must_exist=True)
     if is_within(destination_dir, run_dir):
         raise ValueError("交付目录不得位于归档 run 内部")
-    for source_root in manifest.get("engagement_source_snapshot", []):
-        source = source_root.get("path") if isinstance(source_root, dict) else ""
-        if source:
-            source_path = resolve_inside(root, str(source), "源材料快照", must_exist=True)
-            if is_within(destination_dir, source_path) or is_within(source_path, destination_dir):
-                raise ValueError("交付目录不得位于源材料目录内或覆盖源材料目录")
+    output_root = resolve_inside(root, manifest["output_root"], "output_root", must_exist=True)
+    if not is_within(destination_dir, output_root):
+        raise ValueError("交付目录必须位于获批 output_root 内")
+    for source in manifest.get("source_roots", []):
+        source_path = resolve_inside(root, str(source), "source_root", must_exist=True)
+        if is_within(destination_dir, source_path) or is_within(source_path, destination_dir):
+            raise ValueError("交付目录不得位于源材料目录内或覆盖源材料目录")
     return destination_dir, destination_dir / filename
 
 

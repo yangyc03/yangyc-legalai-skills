@@ -12,6 +12,6 @@ Legal Matter Archive is licensed under Apache-2.0. It can interoperate with the 
 | Poppler (`pdftoppm`) | Optional automatic PDF rendering | GPL-2.0-or-later | https://poppler.freedesktop.org/ |
 | qpdf | Optional PDF compatibility fallback | Apache-2.0 | https://github.com/qpdf/qpdf |
 | Ghostscript | Optional printable-permission encrypted PDF conversion | AGPL-3.0-or-later or commercial license | https://www.ghostscript.com/ |
-| Tesseract OCR | Optional local OCR | Apache-2.0 | https://github.com/tesseract-ocr/tesseract |
+| Tesseract OCR | Optional user-managed local OCR preprocessing; detected but not automatically invoked in 0.1.0-beta | Apache-2.0 | https://github.com/tesseract-ocr/tesseract |
 
 Users are responsible for installing only the optional components they choose and for complying with the licenses of the versions they install. `doctor` detects these programs; `setup --plan` only proposes changes, and `setup --apply` requires an explicit confirmation token.

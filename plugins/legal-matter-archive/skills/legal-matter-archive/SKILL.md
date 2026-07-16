@@ -25,7 +25,7 @@ description: "Prepare safe, lawyer-confirmed formal archives for Chinese litigat
 1. 原始材料只读；不得移动、删除、重命名、覆盖，输出目录必须与来源目录分离。
 2. 先盘点和预演，再由律师确认；只有匹配的确认令牌才能执行准备、最终化、交付或失效操作。
 3. 一份主委托合同及属于该合同的补充协议原则上构成一个归档单元；例外由律师明确指定。
-4. 材料范围、顺序、排除项、必备材料、小结、封皮字段、内部结案日期和现有页码均由律师确认，不从文件名、时间戳或旧经验推断。
+4. 材料范围、顺序、排除项、必备材料、小结、封皮字段、内部结案日期和现有页码均由律师确认；来源目录内每个文件必须明确纳入或排除，不从文件名、时间戳或旧经验推断。
 5. 本 Skill 不进行法律分析，不判断胜败或项目成功，不管理在办事项，不写案件台账，不操作 OA。
 6. 客户材料、配置、运行结果和模板只保存在用户指定的本地位置，不上传网络。
 
@@ -86,9 +86,9 @@ description: "Prepare safe, lawyer-confirmed formal archives for Chinese litigat
 - `visual`：Poppler `pdftoppm`。用于自动渲染核验，不依赖 Pillow。
 - `pdf-compat`：qpdf。默认不需要；pypdf 合并失败或页面资源异常时启用。
 - `encrypted-pdf`：Ghostscript。只处理无需打开密码且允许打印的权限型加密 PDF。
-- `ocr`：Tesseract。供用户配置的本地 OCR 策略使用，不把 OCR 结果自动当作律师确认事实。
+- `ocr`：Tesseract。`0.1.0-beta` 仅检测本地程序并记录用户管理的本地 OCR 策略，归档 Tool 不自动执行 OCR；OCR 结果必须在外部本地流程中逐项校对，不得自动当作律师确认事实。
 
-缺少可选能力时应明确报告降级。没有 Poppler 或未完成视觉复核时，只能标记为 `technical_complete_manual_visual_review_required`；自动视觉 QA 和律师复核均满足后，才允许标记为 `ready_for_oa_submission`。
+配置中的 `enabled_layers` 和策略是执行边界：未启用的 qpdf、Ghostscript、图像、DOCX 或自动视觉能力，即使本机已经安装也不得调用。缺少可选能力时应明确报告降级。没有 Poppler、未启用自动视觉核验、任一自动视觉检查失败或未完成律师视觉复核时，只能标记为 `technical_complete_manual_visual_review_required`；全部自动视觉 QA 和律师复核均满足后，才允许标记为 `ready_for_oa_submission`。
 
 macOS 只有在 Homebrew 已存在且用户在安装计划中明确选择时才调用；不得自动安装 Homebrew。Windows `0.1.0-beta` 为实验性支持，只检测系统程序并提供安装指引，不自动安装。
 
@@ -112,7 +112,7 @@ macOS 只有在 Homebrew 已存在且用户在安装计划中明确选择时才�
 4. 律师检查真实页数、目录、封皮、材料顺序和所有警示。
 5. `finalize`：使用第二道令牌生成最终 PDF、manifest 和技术记录。
 6. `verify`：检查哈希、页数、连续页码和渲染结果。视觉确认必须记录复核人。
-7. `preview-deliver` / `deliver`：再次预览并确认后，只把最终 PDF 复制到项目内空的交付目录。
+7. `preview-deliver` / `deliver`：再次预览并确认后，只把最终 PDF 复制到获批 `output_root` 内的空交付目录，禁止写入任何来源目录。
 8. 如需撤回，使用 `preview-invalidate` / `invalidate` 标记 run 失效；不删除源材料或历史技术记录。
 
 归档命令必须提供 `--project-root`。示例：
