@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "archive_verification.schema.json",
+  "type": "object", "required": ["schema_version", "status", "technical_ok", "render_ok", "rendered_pages", "visual_review_confirmed", "reviewer", "reviewed_at", "archive_manifest", "archive_manifest_sha256", "verification_report", "review_artifacts", "checks"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "status": {"enum": ["technical_complete_manual_visual_review_required", "ready_for_oa_submission"]},
+    "technical_ok": {"type": "boolean"}, "render_ok": {"type": "boolean"}, "rendered_pages": {"type": "array"},
+    "visual_review_confirmed": {"type": "boolean"}, "reviewer": {"type": "string"}, "reviewed_at": {"type": "string"},
+    "archive_manifest": {"type": "string"}, "archive_manifest_sha256": {"type": "string"},
+    "verification_report": {"type": "string"}, "review_artifacts": {"type": "object"}, "checks": {"type": "array"}
+  }
+}

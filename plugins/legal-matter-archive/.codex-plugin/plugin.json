@@ -1,0 +1,37 @@
+{
+  "name": "legal-matter-archive",
+  "version": "0.1.0-beta",
+  "description": "Prepare lawyer-confirmed formal archives for Chinese legal matters with immutable sources, confirmation gates and visual QA.",
+  "author": {
+    "name": "Yingchao Yang",
+    "url": "https://github.com/yangyc03"
+  },
+  "homepage": "https://github.com/yangyc03/yangyc-legalai-skills",
+  "repository": "https://github.com/yangyc03/yangyc-legalai-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "legal",
+    "archive",
+    "pdf",
+    "china"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Legal Matter Archive",
+    "shortDescription": "律师确认后安全生成诉讼、非诉与常法结案卷宗。",
+    "longDescription": "本地盘点法律业务材料，经预演和多道确认后生成封皮、目录、连续页码、清单与最终 PDF，并区分技术完成、视觉复核和 OA 提交准备状态。",
+    "developerName": "Yingchao Yang",
+    "category": "Productivity",
+    "capabilities": [
+      "Local file processing",
+      "PDF archive preparation",
+      "Visual QA"
+    ],
+    "websiteURL": "https://github.com/yangyc03/yangyc-legalai-skills",
+    "defaultPrompt": [
+      "检查本机是否具备运行法律业务结案归档的条件。",
+      "根据本地模板生成配置计划，等待我确认后再写入。",
+      "对已确认结案的事项先盘点材料并生成归档预演。"
+    ]
+  }
+}

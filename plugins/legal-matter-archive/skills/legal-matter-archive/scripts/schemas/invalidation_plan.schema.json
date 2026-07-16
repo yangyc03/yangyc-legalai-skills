@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "invalidation_plan.schema.json",
+  "title": "Legal Matter Archive Invalidation Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invalidation_version", "status", "archive_manifest", "archive_manifest_sha256",
+    "reason", "confirmed_by", "confirmation_token"
+  ],
+  "properties": {
+    "invalidation_version": {"const": "1.0"},
+    "status": {"const": "preview"},
+    "archive_manifest": {"type": "string", "minLength": 1},
+    "archive_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reason": {"type": "string", "minLength": 1},
+    "confirmed_by": {"type": "string", "minLength": 1},
+    "confirmation_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

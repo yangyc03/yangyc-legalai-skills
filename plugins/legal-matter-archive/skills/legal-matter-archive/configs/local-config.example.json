@@ -1,0 +1,59 @@
+{
+  "config_schema_version": "1.0",
+  "enabled_layers": [
+    "core",
+    "visual"
+  ],
+  "policies": {
+    "visual_verification": "automatic_when_available",
+    "ocr": "disabled",
+    "encrypted_pdf": "printable_permissions_only"
+  },
+  "profiles": {
+    "litigation": {
+      "template_mode": "pdf",
+      "rule": {
+        "path": "REPLACE_WITH_LOCAL_LITIGATION_RULE_FILE.md"
+      },
+      "cover": {
+        "path": "REPLACE_WITH_FILLED_LITIGATION_COVER.pdf",
+        "expected_pages": 1
+      },
+      "directory": {
+        "path": "REPLACE_WITH_FILLED_LITIGATION_DIRECTORY.pdf",
+        "expected_pages": 1
+      },
+      "ocr_enabled": false
+    },
+    "special_nonlitigation": {
+      "template_mode": "docx",
+      "rule": {
+        "path": "REPLACE_WITH_LOCAL_NONLITIGATION_RULE_FILE.md"
+      },
+      "cover": {
+        "path": "REPLACE_WITH_LOCAL_NONLITIGATION_COVER_TEMPLATE.docx",
+        "expected_pages": 1
+      },
+      "directory": {
+        "path": "REPLACE_WITH_LOCAL_NONLITIGATION_DIRECTORY_TEMPLATE.docx",
+        "expected_pages": 1
+      },
+      "ocr_enabled": false
+    },
+    "regular_counsel_close": {
+      "template_mode": "pdf",
+      "rule": {
+        "path": "REPLACE_WITH_LOCAL_COUNSEL_ARCHIVE_RULE_FILE.md"
+      },
+      "cover": {
+        "path": "REPLACE_WITH_FILLED_COUNSEL_COVER.pdf",
+        "expected_pages": 1
+      },
+      "directory": {
+        "path": "REPLACE_WITH_FILLED_COUNSEL_DIRECTORY.pdf",
+        "expected_pages": 1
+      },
+      "ocr_enabled": false
+    }
+  }
+}

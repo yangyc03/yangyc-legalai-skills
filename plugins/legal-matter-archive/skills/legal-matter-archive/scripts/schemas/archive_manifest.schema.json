@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "archive_manifest.schema.json",
+  "type": "object", "required": ["schema_version", "status", "run_disposition", "profile", "matter_id", "run_dir", "template_mode", "front_matter", "sections", "body_page_count", "final_pdf", "final_pdf_sha256", "final_page_count", "engagement_source_snapshot"],
+  "properties": {
+    "schema_version": {"const": "1.0"}, "status": {"const": "technical_complete_manual_visual_review_required"},
+    "run_disposition": {"const": "active"}, "profile": {"type": "string"}, "matter_id": {"type": "string"},
+    "run_dir": {"type": "string"}, "template_mode": {"enum": ["pdf", "docx"]},
+    "front_matter": {"type": "object"}, "sections": {"type": "array"},
+    "body_page_count": {"type": "integer", "minimum": 1}, "final_pdf": {"type": "string"},
+    "final_pdf_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "final_page_count": {"type": "integer", "minimum": 1}, "engagement_source_snapshot": {"type": "array"}
+  }
+}

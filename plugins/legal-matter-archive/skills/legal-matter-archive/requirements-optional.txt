@@ -1,0 +1,8 @@
+# DOCX template layer
+lxml>=5,<7
+
+# Image input layer
+Pillow>=10,<13
+
+# LibreOffice, Poppler, qpdf, Ghostscript and Tesseract are optional system programs.
+# See references/local-configuration.md and THIRD_PARTY_NOTICES.md.

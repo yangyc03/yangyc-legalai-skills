@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "delivery_plan.schema.json",
+  "type": "object", "required": ["schema_version", "status", "archive_manifest", "archive_manifest_sha256", "verification_record", "verification_sha256", "final_pdf", "final_pdf_sha256", "destination_directory", "destination_pdf", "filename", "visual_reviewer", "delivery_scope", "confirmation_token"],
+  "properties": {
+    "schema_version": {"const": "1.0"}, "status": {"const": "preview"},
+    "archive_manifest": {"type": "string"}, "archive_manifest_sha256": {"type": "string"},
+    "verification_record": {"type": "string"}, "verification_sha256": {"type": "string"},
+    "final_pdf": {"type": "string"}, "final_pdf_sha256": {"type": "string"},
+    "destination_directory": {"type": "string"}, "destination_pdf": {"type": "string"},
+    "filename": {"type": "string"}, "visual_reviewer": {"type": "string"},
+    "delivery_scope": {"const": "only_final_pdf"}, "confirmation_token": {"type": "string"}
+  }
+}
