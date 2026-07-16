@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "archive_request.schema.json",
+  "title": "Legal Matter Archive Public Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_schema_version", "profile", "matter", "output_root", "items", "exclusions",
+    "engagement", "confirmations", "required_categories"
+  ],
+  "anyOf": [
+    {"required": ["source_root"]},
+    {"required": ["source_roots"]}
+  ],
+  "properties": {
+    "request_schema_version": {"const": "1.0"},
+    "profile": {"enum": ["litigation", "special_nonlitigation", "regular_counsel_close"]},
+    "matter": {
+      "type": "object", "additionalProperties": false, "required": ["id", "internal_close_date"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1}, "subtype": {"type": "string"},
+        "internal_close_date": {"type": "string", "format": "date"},
+        "case_numbers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "stages": {"type": "array", "items": {"enum": ["labor_arbitration", "commercial_arbitration", "first_instance", "second_instance", "retrial", "enforcement", "other"]}, "uniqueItems": true}
+      }
+    },
+    "source_root": {"type": "string", "minLength": 1},
+    "source_roots": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "output_root": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "pattern": "^run-[A-Za-z0-9._-]+$"},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "exclusions": {"type": "array", "items": {"$ref": "#/$defs/exclusion"}},
+    "engagement": {"$ref": "#/$defs/engagement"},
+    "summary": {"$ref": "#/$defs/summary"},
+    "confirmations": {"$ref": "#/$defs/confirmations"},
+    "required_categories": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "directory_groups": {"type": "array", "items": {"$ref": "#/$defs/directoryGroup"}},
+    "cover_fields": {"type": "array", "items": {"type": "object"}},
+    "cover_completion": {"type": ["object", "null"]},
+    "cover_render": {"type": "object"},
+    "page_number_policy": {"enum": ["overlay", "overlay_bottom_right", "keep_confirmed"]},
+    "court_or_tribunal_disposition": {"type": ["object", "null"]},
+    "missing_material_disposition": {"type": ["object", "null"]},
+    "pending_decisions": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "file": {
+      "type": "object", "required": ["path"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+        "display_name": {"type": "string"}, "reason": {"type": "string"},
+        "lawyer_confirmed": {"type": "boolean"}
+      }
+    },
+    "item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "include", "decision_confirmed"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1}, "include": {"type": "boolean"},
+        "decision_confirmed": {"type": "boolean"}, "order": {"type": "integer", "minimum": 1},
+        "category": {"type": "string"}, "display_name": {"type": "string"},
+        "stage": {"type": "string"}, "internal_note": {"type": "string"}
+      }
+    },
+    "exclusion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "reason", "lawyer_confirmed"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1},
+        "lawyer_confirmed": {"const": true}, "display_name": {"type": "string"}
+      }
+    },
+    "engagement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["basis", "scope_summary", "supplemental_agreements", "shared_sources"],
+      "properties": {
+        "basis": {"enum": ["written_contract", "written_contract_source_missing", "lawyer_designated_exception"]},
+        "primary_agreement": {"$ref": "#/$defs/file"},
+        "supplemental_agreements": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+        "shared_sources": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+        "scope_summary": {"type": "string", "minLength": 1},
+        "agreement_reference": {"type": "string"}, "exception_reason": {"type": "string"}
+      }
+    },
+    "summary": {
+      "type": ["object", "null"],
+      "properties": {
+        "status": {"enum": ["draft", "lawyer_confirmed"]}, "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}, "order": {"type": "integer", "minimum": 1}
+      }
+    },
+    "confirmations": {
+      "type": "object", "additionalProperties": false,
+      "required": ["formal_archive", "scope_confirmed", "internal_close", "items_confirmed", "duplicates_reviewed", "directory_confirmed", "cover_directory_reviewed", "existing_page_numbers_reviewed", "confirmed_by", "confirmed_on"],
+      "properties": {
+        "formal_archive": {"const": true}, "scope_confirmed": {"const": true},
+        "internal_close": {"const": true}, "items_confirmed": {"const": true},
+        "duplicates_reviewed": {"type": "boolean"}, "directory_confirmed": {"const": true},
+        "cover_directory_reviewed": {"const": true}, "existing_page_numbers_reviewed": {"const": true},
+        "confirmed_by": {"type": "string", "minLength": 1}, "confirmed_on": {"type": "string", "format": "date"}
+      }
+    },
+    "directoryGroup": {
+      "type": "object", "required": ["group_id", "order", "label", "category", "member_sources"],
+      "properties": {
+        "group_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "order": {"type": "integer", "minimum": 1}, "label": {"type": "string", "minLength": 1},
+        "category": {"type": "string", "minLength": 1},
+        "member_sources": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "formal_remark": {"type": "string"}, "formal_remark_confirmed": {"type": "boolean"}
+      }
+    }
+  }
+}
