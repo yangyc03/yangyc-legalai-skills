@@ -57,7 +57,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 6. 使用 `prepare` 创建 `network-verification.json`，按 `references/run-schema.md` 填写 `queries[]`。完整身份证号码、出生日期、手机、邮箱、授权原文和浏览器凭证不得落盘。
 7. 使用 `validate` 检查主体、状态、网址、查询时间、截图路径和结论措辞。失败、受限或未完成查询不得解释为无记录。
 8. 使用 `build` 生成内部 Markdown 和可选 DOCX。默认 `two-layer`：内部底稿输出至 `01-内部底稿`，正式记录输出至 `02-正式记录`。
-9. 交付前运行 `artifact-audit`，并对 DOCX 进行结构检查和逐页渲染检查。不修改、移动或覆盖客户原始文件。
+9. 交付前运行 `artifact-audit`，检查文本、常见图片元数据及 DOCX 内嵌图片元数据，并对 DOCX 进行结构检查和逐页渲染检查。不修改、移动或覆盖客户原始文件。
 
 ## 截图和证据
 
@@ -108,7 +108,7 @@ python scripts/network_workpaper.py artifact-audit OUTPUT_DIR
 python scripts/watermark_capture.py input.png output.png --evidence-id NQ-01-01-01 --subject 甲某 --source 某公开网站 --queried-at 2026-07-17T14:32:18+08:00
 ```
 
-macOS/Linux 可能使用 `python3`，Windows 可能使用 `py -3`。除非显式传入 `--overwrite`，不得覆盖已有运行文件或成果。
+macOS/Linux 可能使用 `python3`，Windows 可能使用 `py -3`。除非显式传入 `--overwrite`，不得覆盖已有运行文件或成果；输出目标为符号链接时一律拒绝写入。
 
 ## 禁止事项
 

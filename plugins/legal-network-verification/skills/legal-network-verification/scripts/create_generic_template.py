@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -261,9 +263,23 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    if args.output.is_symlink():
+        parser.error(f"output must not be a symbolic link: {args.output}")
     if args.output.exists() and not args.overwrite:
         parser.error(f"output already exists: {args.output}")
-    build_template(args.output)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{args.output.name}.",
+        suffix=".docx",
+        dir=args.output.parent,
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        build_template(temporary_path)
+        os.replace(temporary_path, args.output)
+    finally:
+        temporary_path.unlink(missing_ok=True)
     print(args.output)
     return 0
 

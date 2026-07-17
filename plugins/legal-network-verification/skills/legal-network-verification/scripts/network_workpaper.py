@@ -20,6 +20,7 @@ import sys
 import tempfile
 import zipfile
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -79,7 +80,9 @@ FORBIDDEN_ABSOLUTE_PHRASES = {
     "无任何失信",
     "所有同名结果均与本人无关",
 }
-CHINA_ID_PATTERN = re.compile(r"(?<!\d)\d{17}[0-9Xx](?!\d)")
+CHINA_ID_PATTERN = re.compile(
+    r"(?<!\d)(?:\d{17}[0-9Xx]|\d{8}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3})(?!\d)"
+)
 BIRTHDATE_LABEL_PATTERN = re.compile(
     r"(?:出生日期|出生年月|生日)\s*[:：]?\s*(?:19|20)\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?"
 )
@@ -98,11 +101,22 @@ TEXT_ARTIFACT_SUFFIXES = {
     ".md",
     ".rels",
     ".rst",
+    ".svg",
     ".tsv",
     ".txt",
     ".xml",
     ".yaml",
     ".yml",
+}
+RASTER_IMAGE_SUFFIXES = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
 }
 LOCAL_PATH_PATTERNS = (
     re.compile(r"/Users/[^/\s]+/"),
@@ -131,10 +145,15 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, value: dict[str, Any], *, overwrite: bool = False) -> None:
+    if path.is_symlink():
+        raise ValidationError(f"Output path must not be a symbolic link: {path}")
     if path.exists() and not overwrite:
         raise FileExistsError(f"Output file already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(
+        path,
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def require_object(value: Any, label: str) -> dict[str, Any]:
@@ -213,6 +232,90 @@ def text_privacy_issues(text: str, label: str) -> list[str]:
     return issues
 
 
+def metadata_value_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        decoded: list[str] = []
+        for encoding in ("utf-8", "utf-16-le", "utf-16-be", "latin-1"):
+            try:
+                text = value.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            if text not in decoded:
+                decoded.append(text)
+        return "\n".join(decoded)
+    if isinstance(value, dict):
+        return "\n".join(
+            f"{metadata_value_text(key)}={metadata_value_text(item)}"
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return "\n".join(metadata_value_text(item) for item in value)
+    return str(value)
+
+
+def image_metadata_privacy_issues(payload: bytes, label: str) -> list[str]:
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(payload)) as image:
+            metadata_items: list[tuple[Any, Any]] = list(image.info.items())
+            try:
+                metadata_items.extend(image.getexif().items())
+            except (AttributeError, OSError, ValueError):
+                pass
+            metadata_text = "\n".join(
+                f"{metadata_value_text(key)}={metadata_value_text(value)}"
+                for key, value in metadata_items
+            )
+    except Exception as exc:
+        return [f"unreadable image metadata: {label}: {exc}"]
+    return text_privacy_issues(metadata_text, label)
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def safe_output_destination(path: Path, root: Path, label: str) -> Path:
+    if path.is_symlink():
+        raise ValidationError(f"{label} must not be a symbolic link: {path}")
+    resolved_parent = path.parent.resolve()
+    try:
+        resolved_parent.relative_to(root)
+    except ValueError as exc:
+        raise ValidationError(f"{label} escapes workpaper_root: {path}") from exc
+    destination = resolved_parent / path.name
+    if destination.is_symlink():
+        raise ValidationError(f"{label} must not be a symbolic link: {path}")
+    return destination
+
+
+def atomic_copy_file(source: Path, destination: Path) -> None:
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        shutil.copyfile(source, temporary_path)
+        os.replace(temporary_path, destination)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def template_check(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"DOCX template not found: {path}")
@@ -227,11 +330,22 @@ def template_check(path: Path) -> dict[str, Any]:
                 issues.append("missing word/document.xml")
             combined_xml: list[str] = []
             for name in sorted(names):
-                if not name.lower().endswith((".xml", ".rels", ".txt")):
-                    continue
-                text = archive.read(name).decode("utf-8", errors="ignore")
-                combined_xml.append(text)
-                issues.extend(text_privacy_issues(text, name))
+                lower_name = name.lower()
+                suffix = Path(lower_name).suffix
+                if lower_name.endswith((".xml", ".rels", ".txt")):
+                    text = archive.read(name).decode("utf-8", errors="ignore")
+                    combined_xml.append(text)
+                    issues.extend(text_privacy_issues(text, name))
+                elif lower_name.startswith("word/media/") and suffix in RASTER_IMAGE_SUFFIXES:
+                    issues.extend(
+                        image_metadata_privacy_issues(
+                            archive.read(name),
+                            f"{name}!image-metadata",
+                        )
+                    )
+                elif lower_name.startswith("word/media/") and suffix == ".svg":
+                    text = archive.read(name).decode("utf-8", errors="ignore")
+                    issues.extend(text_privacy_issues(text, name))
             package_text = "\n".join(combined_xml)
             if not re.search(r"\bPAGE\b", package_text):
                 issues.append("missing Word PAGE field")
@@ -292,21 +406,33 @@ def artifact_audit(root: Path) -> dict[str, Any]:
             try:
                 with zipfile.ZipFile(path) as archive:
                     for member in archive.namelist():
-                        if not member.lower().endswith((".xml", ".rels", ".txt", ".json")):
-                            continue
-                        text = archive.read(member).decode("utf-8", errors="ignore")
-                        issues.extend(text_privacy_issues(text, f"{label}!{member}"))
+                        lower_member = member.lower()
+                        member_suffix = Path(lower_member).suffix
+                        if lower_member.endswith((".xml", ".rels", ".txt", ".json")):
+                            text = archive.read(member).decode("utf-8", errors="ignore")
+                            issues.extend(text_privacy_issues(text, f"{label}!{member}"))
+                        elif (
+                            lower_member.startswith("word/media/")
+                            and member_suffix in RASTER_IMAGE_SUFFIXES
+                        ):
+                            issues.extend(
+                                image_metadata_privacy_issues(
+                                    archive.read(member),
+                                    f"{label}!{member}!image-metadata",
+                                )
+                            )
+                        elif lower_member.startswith("word/media/") and member_suffix == ".svg":
+                            text = archive.read(member).decode("utf-8", errors="ignore")
+                            issues.extend(text_privacy_issues(text, f"{label}!{member}"))
             except zipfile.BadZipFile:
                 issues.append(f"invalid DOCX package: {label}")
-        elif suffix == ".png":
-            try:
-                from PIL import Image
-
-                with Image.open(path) as image:
-                    metadata_text = "\n".join(f"{key}={value}" for key, value in image.info.items())
-                issues.extend(text_privacy_issues(metadata_text, f"{label}!png-metadata"))
-            except Exception as exc:
-                issues.append(f"unreadable PNG metadata: {label}: {exc}")
+        elif suffix in RASTER_IMAGE_SUFFIXES:
+            issues.extend(
+                image_metadata_privacy_issues(
+                    path.read_bytes(),
+                    f"{label}!image-metadata",
+                )
+            )
 
     return {
         "root": str(root),
@@ -996,6 +1122,7 @@ def build_formal_docx(data: dict[str, Any], template_path: Path, output_path: Pa
             marker_row_found = True
             for subject in data["subjects"]:
                 new_row = table.add_row()
+                row._tr.addprevious(new_row._tr)
                 if len(new_row.cells) < 3:
                     raise ValidationError("DOCX template subject table must contain at least three columns.")
                 identifier = str(
@@ -1128,13 +1255,17 @@ def build_outputs(
             formal_output_dir / f"网络查询记录-{project_name}-{date_token}{draft_suffix}.docx"
         )
 
-    existing = [path for path in final_paths if path.exists()]
-    if existing and not overwrite:
-        raise FileExistsError("Output file(s) already exist: " + ", ".join(str(path) for path in existing))
-
     internal_output_dir.mkdir(parents=True, exist_ok=True)
     if formal_enabled:
         formal_output_dir.mkdir(parents=True, exist_ok=True)
+    safe_destinations = [
+        safe_output_destination(path, root, "output file") for path in final_paths
+    ]
+    existing = [path for path in safe_destinations if path.exists()]
+    if existing and not overwrite:
+        raise FileExistsError(
+            "Output file(s) already exist: " + ", ".join(str(path) for path in existing)
+        )
     with tempfile.TemporaryDirectory(prefix="network-workpaper-build-") as temp_text:
         temp_dir = Path(temp_text)
         staged: list[tuple[Path, Path]] = []
@@ -1160,8 +1291,8 @@ def build_outputs(
             assert resolved_template is not None
             build_formal_docx(data, resolved_template, staged_path, formal_mode)
             staged.append((staged_path, destination))
-        for staged_path, destination in staged:
-            shutil.copyfile(staged_path, destination)
+        for (staged_path, _), destination in zip(staged, safe_destinations):
+            atomic_copy_file(staged_path, destination)
     return final_paths
 
 

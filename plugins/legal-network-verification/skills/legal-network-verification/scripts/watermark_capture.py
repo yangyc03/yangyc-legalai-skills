@@ -4,15 +4,19 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
-import re
 
 from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 
-CHINA_ID_PATTERN = re.compile(r"(?<!\d)\d{17}[0-9Xx](?!\d)")
+CHINA_ID_PATTERN = re.compile(
+    r"(?<!\d)(?:\d{17}[0-9Xx]|\d{8}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3})(?!\d)"
+)
 FONT_CANDIDATES = (
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
@@ -79,6 +83,8 @@ def add_watermark(
         raise ValueError("Output must not overwrite the source screenshot")
     if output_path.suffix.lower() != ".png":
         raise ValueError("Output screenshot must use .png extension")
+    if output_path.is_symlink():
+        raise ValueError("Output screenshot must not be a symbolic link")
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"Output screenshot already exists: {output_path}")
     for label, value in (("evidence-id", evidence_id), ("subject", subject), ("source", source)):
@@ -127,7 +133,18 @@ def add_watermark(
     metadata.add_text("Source", source)
     metadata.add_text("CaptureKind", "watermarked_page_only")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result.save(output_path, format="PNG", pnginfo=metadata, optimize=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=output_path.parent,
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        result.save(temporary_path, format="PNG", pnginfo=metadata, optimize=True)
+        os.replace(temporary_path, output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def parse_args() -> argparse.Namespace:

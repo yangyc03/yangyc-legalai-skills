@@ -38,9 +38,10 @@ PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 NS = {"w": W_NS, "r": R_NS, "pr": PKG_REL_NS}
 BUNDLED_TEMPLATE = SKILL_ROOT / "assets" / "generic-network-query-record.docx"
 SYNTHETIC_FULL_ID = "1101011990" + "03071234"
+SYNTHETIC_LEGACY_ID = "1101019003" + "07123"
 
 
-def make_template(path: Path) -> None:
+def make_template(path: Path, *, trailing_subject_row: bool = False) -> None:
     document = Document()
     document.add_heading("网络查询记录", level=1)
     document.add_paragraph("项目名称：【项目名称】")
@@ -49,11 +50,13 @@ def make_template(path: Path) -> None:
     document.add_paragraph("查询时间：【查询时间】")
     document.add_paragraph("查询地点：【查询地点】")
     document.add_paragraph("查询人：【查询人】")
-    table = document.add_table(rows=2, cols=3)
+    table = document.add_table(rows=3 if trailing_subject_row else 2, cols=3)
     table.cell(0, 0).text = "主体角色"
     table.cell(0, 1).text = "查询对象"
     table.cell(0, 2).text = "身份号码"
     table.cell(1, 0).text = "【SUBJECT_ROWS】"
+    if trailing_subject_row:
+        table.cell(2, 0).text = "固定说明行"
     marker = document.add_paragraph("【QUERY_RESULT_ITEMS】")
     marker.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     document.add_paragraph("附件：查询网址截图底稿另行保存。")
@@ -380,6 +383,9 @@ class NetworkWorkpaperV12Tests(unittest.TestCase):
                         formal_mode="draft",
                     )
 
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.scan_sensitive_values({"note": SYNTHETIC_LEGACY_ID})
+
     def test_sensitive_page_may_be_recorded_without_screenshot(self) -> None:
         data = copy.deepcopy(self.data)
         query = data["queries"][0]
@@ -505,9 +511,94 @@ class NetworkWorkpaperV12Tests(unittest.TestCase):
         Image.new("RGB", (20, 20), "white").save(
             bad_root / "record.png", pnginfo=metadata
         )
+        exif = Image.Exif()
+        exif[0x010E] = SYNTHETIC_FULL_ID
+        Image.new("RGB", (20, 20), "white").save(
+            bad_root / "record.jpg", exif=exif
+        )
         report = network_workpaper.artifact_audit(bad_root)
         self.assertFalse(report["ok"])
-        self.assertGreaterEqual(len(report["issues"]), 3)
+        self.assertGreaterEqual(len(report["issues"]), 4)
+
+    def test_template_and_audit_reject_sensitive_embedded_image_metadata(self) -> None:
+        metadata = PngImagePlugin.PngInfo()
+        metadata.add_text("Description", SYNTHETIC_FULL_ID)
+        image_path = self.root / "embedded-sensitive.png"
+        Image.new("RGB", (20, 20), "white").save(image_path, pnginfo=metadata)
+
+        document = Document(self.template)
+        document.add_paragraph().add_run().add_picture(str(image_path))
+        template_path = self.root / "template-with-sensitive-image.docx"
+        document.save(template_path)
+
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.template_check(template_path)
+        self.assertFalse(network_workpaper.artifact_audit(template_path)["ok"])
+
+    def test_subject_rows_replace_marker_in_place(self) -> None:
+        template_path = self.root / "template-with-following-row.docx"
+        make_template(template_path, trailing_subject_row=True)
+        network_workpaper.template_check(template_path)
+        output_path = self.root / "subject-row-output.docx"
+        network_workpaper.build_formal_docx(
+            self.data,
+            template_path,
+            output_path,
+            "draft",
+        )
+        first_cells = [row.cells[0].text for row in Document(output_path).tables[0].rows]
+        self.assertEqual(
+            first_cells,
+            ["主体角色", "自然人核查对象", "企业核查对象", "固定说明行"],
+        )
+
+    def test_overwrite_rejects_destination_symlinks(self) -> None:
+        outside_target = self.root.parent / f"{self.root.name}-outside.txt"
+        outside_target.write_text("ORIGINAL", encoding="utf-8")
+        self.addCleanup(outside_target.unlink, missing_ok=True)
+
+        output_root = self.root / "symlink-output"
+        internal_dir = output_root / "01-内部底稿"
+        internal_dir.mkdir(parents=True)
+        build_link = internal_dir / "甲某网络核查底稿-20260717.md"
+        try:
+            build_link.symlink_to(outside_target)
+        except OSError as exc:  # pragma: no cover - Windows without symlink permission
+            self.skipTest(f"symbolic links are unavailable: {exc}")
+
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.build_outputs(
+                self.data,
+                workpaper_root=self.root,
+                output_dir=output_root,
+                template_docx=None,
+                formal_mode="none",
+                layout="two-layer",
+                overwrite=True,
+            )
+        self.assertEqual(outside_target.read_text(encoding="utf-8"), "ORIGINAL")
+
+        json_link = self.root / "prepared.json"
+        json_link.symlink_to(outside_target)
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.write_json(json_link, {"safe": True}, overwrite=True)
+        self.assertEqual(outside_target.read_text(encoding="utf-8"), "ORIGINAL")
+
+        source = self.root / "symlink-source.png"
+        Image.new("RGB", (20, 20), "white").save(source)
+        watermark_link = self.root / "symlink-watermark.png"
+        watermark_link.symlink_to(outside_target)
+        with self.assertRaises(ValueError):
+            watermark_capture.add_watermark(
+                source,
+                watermark_link,
+                evidence_id="NQ-01-01-01",
+                subject="甲某",
+                source="示例网站",
+                queried_at=watermark_capture.parse_timestamp("2026-07-17T09:10:11+08:00"),
+                overwrite=True,
+            )
+        self.assertEqual(outside_target.read_text(encoding="utf-8"), "ORIGINAL")
 
     def test_watermark_preserves_timezone_and_rejects_sensitive_text(self) -> None:
         source = self.root / "source.png"
@@ -544,6 +635,15 @@ class NetworkWorkpaperV12Tests(unittest.TestCase):
                 source="示例网站",
                 queried_at=queried_at,
                 overwrite=True,
+            )
+        with self.assertRaises(ValueError):
+            watermark_capture.add_watermark(
+                source,
+                self.root / "legacy-id.png",
+                evidence_id="NQ-01-01-01",
+                subject=SYNTHETIC_LEGACY_ID,
+                source="示例网站",
+                queried_at=queried_at,
             )
 
     def test_public_package_has_one_core_and_thin_adapter(self) -> None:
