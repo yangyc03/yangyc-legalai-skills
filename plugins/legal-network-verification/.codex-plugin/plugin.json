@@ -1,0 +1,39 @@
+{
+  "name": "legal-network-verification",
+  "version": "1.2.0-beta",
+  "description": "Portable Chinese legal public-source verification with privacy gates, page-only evidence and two-layer workpapers.",
+  "author": {
+    "name": "Yingchao Yang",
+    "url": "https://github.com/yangyc03"
+  },
+  "homepage": "https://github.com/yangyc03/yangyc-legalai-skills/tree/main/plugins/legal-network-verification",
+  "repository": "https://github.com/yangyc03/yangyc-legalai-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "legal",
+    "due-diligence",
+    "public-records",
+    "workpaper",
+    "privacy"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Legal Network Verification",
+    "shortDescription": "Authorized public-source checks and workpapers",
+    "longDescription": "Use one portable Skill to conduct authorized Chinese public-source checks, preserve privacy-safe page evidence and produce internal Markdown plus concise DOCX query records.",
+    "developerName": "Yingchao Yang",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/yangyc03/yangyc-legalai-skills",
+    "privacyPolicyURL": "https://github.com/yangyc03/yangyc-legalai-skills/blob/main/plugins/legal-network-verification/PRIVACY.md",
+    "defaultPrompt": [
+      "对我指定的公司或自然人开展经授权的公开网络核查。",
+      "根据已脱敏的查询记录和截图生成两层核查底稿。",
+      "检查当前环境能否安全运行网络核查 Skill。"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "法律网络核查"
+  short_description: "公开网站查询、网页截图、同名排除及两层网络核查底稿"
+  default_prompt: "Use $legal-network-verification to conduct authorized public-source checks and generate internal Markdown workpapers plus a concise formal network query record."
+policy:
+  allow_implicit_invocation: true

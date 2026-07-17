@@ -1,8 +1,8 @@
 # 杨颖超律师 LegalAI Skills
 
-Reusable Codex skills for Chinese legal workflows, maintained by **Yingchao Yang (杨颖超律师)**.
+Reusable Agent Skills for Chinese legal workflows, maintained by **Yingchao Yang (杨颖超律师)**.
 
-本仓库用于发布经过筛选、脱敏、测试和许可核验的中国法律实务 Codex Skills。项目强调本地优先、来源可追踪、律师复核和明确的能力边界。
+本仓库用于发布经过筛选、脱敏、测试和许可核验的中国法律实务 Agent Skills。项目强调本地优先、来源可追踪、律师复核和明确的能力边界。
 
 ## 项目原则
 
@@ -14,7 +14,7 @@ Reusable Codex skills for Chinese legal workflows, maintained by **Yingchao Yang
 
 ## 仓库结构
 
-公开能力将按业务线封装为可独立安装的 Codex 插件：
+公开能力以平台中立的 `SKILL.md` 目录为核心，按需提供 Codex 等平台的薄适配层：
 
 ```text
 plugins/
@@ -26,7 +26,9 @@ plugins/
         SKILL.md
 ```
 
-当前分支包含首个公开发行候选插件 `local-redaction-assistant v1.2.0`，正在通过 Draft PR 接受公开发布审查。公共仓库的 `main` 分支只有在完成复核后才视为正式发行。
+WorkBuddy 或其他支持 Agent Skills 目录规范的 Agent，可直接导入 `skills/<skill-name>/`；不支持自动发现时，可手工加载其 `SKILL.md`。平台适配文件不承载业务逻辑。
+
+当前公开候选包括 `local-redaction-assistant` 和 `legal-network-verification`；各候选只有在完成对应的发布复核并合并至 `main` 后，才视为正式发行。
 
 ## 公开发布标准
 

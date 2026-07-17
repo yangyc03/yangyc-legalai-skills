@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository publishes stable, reusable Codex plugins and Skills for Chinese legal workflows. It is a public distribution repository, not a development mirror of private systems.
+This repository publishes stable, reusable Agent Skills for Chinese legal workflows. Platform-specific wrappers may improve discovery or installation, but the reusable Skill is the product. This is a public distribution repository, not a development mirror of private systems.
 
 ## Publication boundary
 
@@ -13,12 +13,14 @@ This repository publishes stable, reusable Codex plugins and Skills for Chinese 
 - Verify redistribution rights for every imported rule, reference, template, script, and asset.
 - Remove machine-specific paths and private organization branding unless publication is expressly authorized.
 
-## Plugin and Skill structure
+## Portable Skill and adapter structure
 
 - Put each independently installable package under `plugins/<plugin-name>/`.
-- Every plugin must contain `.codex-plugin/plugin.json`.
-- Put bundled Skills under `plugins/<plugin-name>/skills/<skill-name>/`.
+- A package may contain `.codex-plugin/plugin.json` as a thin Codex adapter.
+- Put the canonical, platform-neutral Skill under `plugins/<plugin-name>/skills/<skill-name>/`.
 - Every Skill must contain `SKILL.md` with a stable kebab-case `name` and a clear `description`.
+- Keep all business rules, scripts, references and assets in the canonical Skill. Adapters must not fork or duplicate business logic.
+- Document how WorkBuddy and other capable Agents can import the same Skill directory, and distinguish design compatibility from runtime-verified compatibility.
 - Group Skills only when they serve one coherent workflow and can share a release lifecycle.
 - Do not add empty plugin directories or speculative components.
 
