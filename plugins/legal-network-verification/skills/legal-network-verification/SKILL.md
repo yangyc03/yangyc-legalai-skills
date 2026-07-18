@@ -7,7 +7,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 
 ## 维护信息
 
-- 版本：v1.2.0-beta
+- 版本：v1.2.1-beta
 - 维护者：Yingchao Yang
 - 许可：Apache License 2.0
 - 适用语境：中国法律公开信息核查；法律依据和网站功能均需按项目时点复核。
@@ -34,6 +34,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 
 - 默认时区为 `Asia/Shanghai`，可在运行文件中显式改为其他 IANA 时区。
 - 根据主体和项目选择 `general-person`、`general-company`、`private-fund` 或 `custom`；读取 `references/site-profiles.md`。
+- 统一社会信用代码只允许写入公司主体的 `credit_code`，并按 GB 32100 字符集和校验位验证；自然人不得使用该字段。
 - 正式版缺少查询地点、查询人、统一社会信用代码或合规脱敏身份证号码时，拒绝生成。
 
 ## 个人信息强制规则
@@ -57,7 +58,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 6. 使用 `prepare` 创建 `network-verification.json`，按 `references/run-schema.md` 填写 `queries[]`。完整身份证号码、出生日期、手机、邮箱、授权原文和浏览器凭证不得落盘。
 7. 使用 `validate` 检查主体、状态、网址、查询时间、截图路径和结论措辞。失败、受限或未完成查询不得解释为无记录。
 8. 使用 `build` 生成内部 Markdown 和可选 DOCX。默认 `two-layer`：内部底稿输出至 `01-内部底稿`，正式记录输出至 `02-正式记录`。
-9. 交付前运行 `artifact-audit`，检查文本、常见图片元数据及 DOCX 内嵌图片元数据，并对 DOCX 进行结构检查和逐页渲染检查。不修改、移动或覆盖客户原始文件。
+9. 交付前运行 `artifact-audit`，检查文本、常见图片元数据及 DOCX 内嵌图片元数据，并对 DOCX 进行结构检查和逐页渲染检查。成果含公司统一社会信用代码时必须通过 `--run-file` 提供当前已验证运行文件；只精确放行该文件中有效的公司代码，无上下文时失败关闭。不修改、移动或覆盖客户原始文件。
 
 ## 截图和证据
 
@@ -104,7 +105,7 @@ python scripts/network_workpaper.py prepare input.json --output network-verifica
 python scripts/network_workpaper.py validate network-verification.json --workpaper-root WORKPAPER_ROOT
 python scripts/network_workpaper.py template-check TEMPLATE.docx
 python scripts/network_workpaper.py build network-verification.json --workpaper-root WORKPAPER_ROOT --output-dir OUTPUT_DIR --formal-mode draft --layout two-layer
-python scripts/network_workpaper.py artifact-audit OUTPUT_DIR
+python scripts/network_workpaper.py artifact-audit OUTPUT_DIR --run-file network-verification.json
 python scripts/watermark_capture.py input.png output.png --evidence-id NQ-01-01-01 --subject 甲某 --source 某公开网站 --queried-at 2026-07-17T14:32:18+08:00
 ```
 

@@ -39,6 +39,8 @@ NS = {"w": W_NS, "r": R_NS, "pr": PKG_REL_NS}
 BUNDLED_TEMPLATE = SKILL_ROOT / "assets" / "generic-network-query-record.docx"
 SYNTHETIC_FULL_ID = "1101011990" + "03071234"
 SYNTHETIC_LEGACY_ID = "1101019003" + "07123"
+SYNTHETIC_VALID_CREDIT_CODE = "911100001234567810"
+SYNTHETIC_OTHER_VALID_CREDIT_CODE = "911100001234567823"
 
 
 def make_template(path: Path, *, trailing_subject_row: bool = False) -> None:
@@ -108,7 +110,7 @@ def anonymous_data() -> dict:
                 "name": "示例科技有限公司",
                 "role": "企业核查对象",
                 "associated_entity": "",
-                "credit_code": "91110000TEST000001",
+                "credit_code": SYNTHETIC_VALID_CREDIT_CODE,
             },
         ],
         "queries": [
@@ -213,7 +215,7 @@ def anonymous_data() -> dict:
     }
 
 
-class NetworkWorkpaperV12Tests(unittest.TestCase):
+class NetworkWorkpaperV121Tests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
@@ -385,6 +387,101 @@ class NetworkWorkpaperV12Tests(unittest.TestCase):
 
         with self.assertRaises(network_workpaper.ValidationError):
             network_workpaper.scan_sensitive_values({"note": SYNTHETIC_LEGACY_ID})
+
+    def test_company_credit_code_is_field_aware_and_check_digit_validated(self) -> None:
+        network_workpaper.validate_run(
+            self.data,
+            workpaper_root=self.root,
+            formal_mode="final",
+        )
+
+        for invalid in (
+            SYNTHETIC_VALID_CREDIT_CODE[:-1] + "1",
+            "91110000TEST000001",
+        ):
+            with self.subTest(invalid=invalid):
+                data = copy.deepcopy(self.data)
+                data["subjects"][1]["credit_code"] = invalid
+                with self.assertRaises(network_workpaper.ValidationError):
+                    network_workpaper.validate_run(data, formal_mode="draft")
+
+        natural_person = copy.deepcopy(self.data)
+        natural_person["subjects"][0]["credit_code"] = SYNTHETIC_VALID_CREDIT_CODE
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(natural_person, formal_mode="draft")
+
+        for field in ("result_summary", "query_terms", "filters"):
+            with self.subTest(field=field):
+                data = copy.deepcopy(self.data)
+                data["queries"][0][field] = SYNTHETIC_VALID_CREDIT_CODE
+                with self.assertRaises(network_workpaper.ValidationError):
+                    network_workpaper.validate_run(data, formal_mode="draft")
+
+    def test_credit_code_prepare_validate_build_and_contextual_audit(self) -> None:
+        prepared = network_workpaper.prepare_run(
+            {
+                "run_id": "NQ-20260718-USCC",
+                "timezone": "Asia/Shanghai",
+                "profile": "custom",
+                "project": copy.deepcopy(self.data["run"]["project"]),
+                "formal_record": copy.deepcopy(self.data["run"]["formal_record"]),
+                "subjects": copy.deepcopy(self.data["subjects"]),
+            }
+        )
+        network_workpaper.validate_run(prepared, formal_mode="final")
+
+        output_root = self.root / "credit-code-flow"
+        paths = network_workpaper.build_outputs(
+            prepared,
+            workpaper_root=self.root,
+            output_dir=output_root,
+            template_docx=self.template,
+            formal_mode="final",
+            layout="two-layer",
+            overwrite=False,
+        )
+        docx_path = next(path for path in paths if path.suffix == ".docx")
+        table_text = "\n".join(
+            cell.text
+            for table in Document(docx_path).tables
+            for row in table.rows
+            for cell in row.cells
+        )
+        self.assertIn(SYNTHETIC_VALID_CREDIT_CODE, table_text)
+
+        contextual_report = network_workpaper.artifact_audit(
+            output_root,
+            run_data=prepared,
+        )
+        self.assertTrue(contextual_report["ok"])
+        self.assertEqual(contextual_report["validated_company_credit_codes"], 1)
+
+        standalone_report = network_workpaper.artifact_audit(output_root)
+        self.assertFalse(standalone_report["ok"])
+        self.assertEqual(standalone_report["validated_company_credit_codes"], 0)
+
+    def test_artifact_audit_allows_only_exact_context_code_and_never_filename(self) -> None:
+        artifact_root = self.root / "credit-code-audit"
+        artifact_root.mkdir()
+        (artifact_root / "record.md").write_text(
+            SYNTHETIC_OTHER_VALID_CREDIT_CODE,
+            encoding="utf-8",
+        )
+        report = network_workpaper.artifact_audit(artifact_root, run_data=self.data)
+        self.assertFalse(report["ok"])
+
+        (artifact_root / "record.md").write_text(
+            SYNTHETIC_VALID_CREDIT_CODE,
+            encoding="utf-8",
+        )
+        filename = artifact_root / f"{SYNTHETIC_VALID_CREDIT_CODE}.txt"
+        filename.write_text("匿名记录", encoding="utf-8")
+        report = network_workpaper.artifact_audit(artifact_root, run_data=self.data)
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("filename:" in issue for issue in report["issues"]),
+            report["issues"],
+        )
 
     def test_sensitive_page_may_be_recorded_without_screenshot(self) -> None:
         data = copy.deepcopy(self.data)
@@ -651,7 +748,7 @@ class NetworkWorkpaperV12Tests(unittest.TestCase):
         manifest = json.loads(
             (plugin_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(manifest["version"], "1.2.0-beta")
+        self.assertEqual(manifest["version"], "1.2.1-beta")
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertTrue((plugin_root / "LICENSE").is_file())
         self.assertTrue((plugin_root / "PRIVACY.md").is_file())

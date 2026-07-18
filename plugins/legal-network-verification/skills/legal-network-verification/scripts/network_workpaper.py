@@ -83,6 +83,9 @@ FORBIDDEN_ABSOLUTE_PHRASES = {
 CHINA_ID_PATTERN = re.compile(
     r"(?<!\d)(?:\d{17}[0-9Xx]|\d{8}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3})(?!\d)"
 )
+USCC_ALPHABET = "0123456789ABCDEFGHJKLMNPQRTUWXY"
+USCC_PATTERN = re.compile(r"^[0-9ABCDEFGHJKLMNPQRTUWXY]{18}$")
+USCC_WEIGHTS = (1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28)
 BIRTHDATE_LABEL_PATTERN = re.compile(
     r"(?:出生日期|出生年月|生日)\s*[:：]?\s*(?:19|20)\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?"
 )
@@ -186,19 +189,74 @@ def require_timestamp(value: Any, label: str) -> datetime:
     return parsed
 
 
-def scan_sensitive_values(value: Any, location: str = "run") -> None:
+def validate_company_credit_code(value: Any, label: str) -> str:
+    code = require_text(value, label)
+    if not USCC_PATTERN.fullmatch(code):
+        raise ValidationError(
+            f"{label} must be an 18-character unified social credit code using the GB 32100 character set."
+        )
+    total = sum(
+        USCC_ALPHABET.index(character) * weight
+        for character, weight in zip(code[:17], USCC_WEIGHTS)
+    )
+    expected = USCC_ALPHABET[(31 - total % 31) % 31]
+    if code[-1] != expected:
+        raise ValidationError(f"{label} has an invalid unified social credit code check character.")
+    return code
+
+
+def company_credit_code_locations(value: Any, location: str) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    subjects = value.get("subjects")
+    if not isinstance(subjects, list):
+        return {}
+    allowed: dict[str, str] = {}
+    for index, raw_subject in enumerate(subjects):
+        if not isinstance(raw_subject, dict) or raw_subject.get("type") != "company":
+            continue
+        credit_code = str(raw_subject.get("credit_code") or "").strip()
+        if not credit_code:
+            continue
+        credit_code_location = f"{location}.subjects[{index}].credit_code"
+        allowed[credit_code_location] = validate_company_credit_code(
+            credit_code,
+            credit_code_location,
+        )
+    return allowed
+
+
+def scan_sensitive_values(
+    value: Any,
+    location: str = "run",
+    *,
+    allowed_company_credit_code_locations: dict[str, str] | None = None,
+) -> None:
+    if allowed_company_credit_code_locations is None:
+        allowed_company_credit_code_locations = company_credit_code_locations(value, location)
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = str(key).strip().lower().replace("-", "_")
             if normalized in FORBIDDEN_KEYS:
                 raise ValidationError(f"Sensitive field is not allowed: {location}.{key}")
-            scan_sensitive_values(item, f"{location}.{key}")
+            scan_sensitive_values(
+                item,
+                f"{location}.{key}",
+                allowed_company_credit_code_locations=allowed_company_credit_code_locations,
+            )
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
-            scan_sensitive_values(item, f"{location}[{index}]")
+            scan_sensitive_values(
+                item,
+                f"{location}[{index}]",
+                allowed_company_credit_code_locations=allowed_company_credit_code_locations,
+            )
         return
     if isinstance(value, str):
+        allowed_credit_code = allowed_company_credit_code_locations.get(location)
+        if allowed_credit_code is not None and value.strip() == allowed_credit_code:
+            return
         if CHINA_ID_PATTERN.search(value):
             raise ValidationError(f"Full identity number is not allowed: {location}")
         if BIRTHDATE_LABEL_PATTERN.search(value):
@@ -219,9 +277,17 @@ def check_wording(text: str, label: str) -> None:
             raise ValidationError(f"Absolute nonexistence wording is not allowed in {label}: {phrase}")
 
 
-def text_privacy_issues(text: str, label: str) -> list[str]:
+def text_privacy_issues(
+    text: str,
+    label: str,
+    *,
+    allowed_company_credit_codes: frozenset[str] = frozenset(),
+) -> list[str]:
     issues: list[str] = []
-    if CHINA_ID_PATTERN.search(text):
+    if any(
+        match.group(0) not in allowed_company_credit_codes
+        for match in CHINA_ID_PATTERN.finditer(text)
+    ):
         issues.append(f"full identity number: {label}")
     if SENSITIVE_LABEL_PATTERN.search(text):
         issues.append(f"credential or authorization field: {label}")
@@ -253,7 +319,12 @@ def metadata_value_text(value: Any) -> str:
     return str(value)
 
 
-def image_metadata_privacy_issues(payload: bytes, label: str) -> list[str]:
+def image_metadata_privacy_issues(
+    payload: bytes,
+    label: str,
+    *,
+    allowed_company_credit_codes: frozenset[str] = frozenset(),
+) -> list[str]:
     try:
         from PIL import Image
 
@@ -269,7 +340,11 @@ def image_metadata_privacy_issues(payload: bytes, label: str) -> list[str]:
             )
     except Exception as exc:
         return [f"unreadable image metadata: {label}: {exc}"]
-    return text_privacy_issues(metadata_text, label)
+    return text_privacy_issues(
+        metadata_text,
+        label,
+        allowed_company_credit_codes=allowed_company_credit_codes,
+    )
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -386,9 +461,19 @@ def template_check(path: Path) -> dict[str, Any]:
     }
 
 
-def artifact_audit(root: Path) -> dict[str, Any]:
+def artifact_audit(
+    root: Path,
+    *,
+    run_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not root.exists():
         raise FileNotFoundError(f"Artifact path not found: {root}")
+    allowed_company_credit_codes: frozenset[str] = frozenset()
+    if run_data is not None:
+        validate_run(run_data, formal_mode="draft")
+        allowed_company_credit_codes = frozenset(
+            company_credit_code_locations(run_data, "run").values()
+        )
     files = [root] if root.is_file() else sorted(path for path in root.rglob("*") if path.is_file())
     issues: list[str] = []
     scanned = 0
@@ -400,7 +485,11 @@ def artifact_audit(root: Path) -> dict[str, Any]:
         suffix = path.suffix.lower()
         if suffix in TEXT_ARTIFACT_SUFFIXES:
             issues.extend(
-                text_privacy_issues(path.read_text(encoding="utf-8", errors="ignore"), label)
+                text_privacy_issues(
+                    path.read_text(encoding="utf-8", errors="ignore"),
+                    label,
+                    allowed_company_credit_codes=allowed_company_credit_codes,
+                )
             )
         elif suffix == ".docx":
             try:
@@ -410,7 +499,13 @@ def artifact_audit(root: Path) -> dict[str, Any]:
                         member_suffix = Path(lower_member).suffix
                         if lower_member.endswith((".xml", ".rels", ".txt", ".json")):
                             text = archive.read(member).decode("utf-8", errors="ignore")
-                            issues.extend(text_privacy_issues(text, f"{label}!{member}"))
+                            issues.extend(
+                                text_privacy_issues(
+                                    text,
+                                    f"{label}!{member}",
+                                    allowed_company_credit_codes=allowed_company_credit_codes,
+                                )
+                            )
                         elif (
                             lower_member.startswith("word/media/")
                             and member_suffix in RASTER_IMAGE_SUFFIXES
@@ -419,11 +514,18 @@ def artifact_audit(root: Path) -> dict[str, Any]:
                                 image_metadata_privacy_issues(
                                     archive.read(member),
                                     f"{label}!{member}!image-metadata",
+                                    allowed_company_credit_codes=allowed_company_credit_codes,
                                 )
                             )
                         elif lower_member.startswith("word/media/") and member_suffix == ".svg":
                             text = archive.read(member).decode("utf-8", errors="ignore")
-                            issues.extend(text_privacy_issues(text, f"{label}!{member}"))
+                            issues.extend(
+                                text_privacy_issues(
+                                    text,
+                                    f"{label}!{member}",
+                                    allowed_company_credit_codes=allowed_company_credit_codes,
+                                )
+                            )
             except zipfile.BadZipFile:
                 issues.append(f"invalid DOCX package: {label}")
         elif suffix in RASTER_IMAGE_SUFFIXES:
@@ -431,12 +533,14 @@ def artifact_audit(root: Path) -> dict[str, Any]:
                 image_metadata_privacy_issues(
                     path.read_bytes(),
                     f"{label}!image-metadata",
+                    allowed_company_credit_codes=allowed_company_credit_codes,
                 )
             )
 
     return {
         "root": str(root),
         "scanned_files": scanned,
+        "validated_company_credit_codes": len(allowed_company_credit_codes),
         "issues": sorted(dict.fromkeys(issues)),
         "ok": not issues,
     }
@@ -1327,6 +1431,12 @@ def parse_args() -> argparse.Namespace:
         "artifact-audit", help="Scan generated artifacts for sensitive values and local paths."
     )
     audit.add_argument("artifact_path", type=Path)
+    audit.add_argument(
+        "--run-file",
+        type=Path,
+        default=None,
+        help="Validated run context required to allow its exact company credit codes.",
+    )
 
     build = subparsers.add_parser("build", help="Generate internal Markdown and optional formal DOCX.")
     build.add_argument("run_file", type=Path)
@@ -1361,7 +1471,8 @@ def main() -> int:
         elif args.command == "template-check":
             print(json.dumps(template_check(args.template_docx), ensure_ascii=False, indent=2))
         elif args.command == "artifact-audit":
-            report = artifact_audit(args.artifact_path)
+            run_data = load_json(args.run_file) if args.run_file is not None else None
+            report = artifact_audit(args.artifact_path, run_data=run_data)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if not report["ok"]:
                 return 2
