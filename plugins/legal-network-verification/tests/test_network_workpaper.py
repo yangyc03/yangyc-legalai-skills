@@ -550,9 +550,11 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
             "scope_item_id": "SCOPE-001", "matter_category_id": "company.registration",
             "query_term_mode": "company_credit_code", "condition_ids": ["COND-001"],
             "conditions": [{"condition_id": "COND-001", "field": "period", "value": "2023年1月1日至查询日"}],
-            "url": "https://example.invalid/registry/search", "query_terms": "完整主体名称：示例科技有限公司",
-            "filters": "period：2023年1月1日至查询日",
+            "url": "https://example.invalid/registry/search",
+            "query_time": "2026-07-19T11:00:00+08:00",
         })
+        query.pop("query_terms")
+        query.pop("filters")
         data["queries"] = [query]
         data["query_scope"] = {
             "status": "user_confirmed", "confirmed_at": "2026-07-19T10:00:00+08:00",
@@ -565,12 +567,38 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
             }],
         }
         network_workpaper.validate_run(data, workpaper_root=self.root, formal_mode="final")
+        self.assertEqual(
+            network_workpaper.query_display_descriptions(
+                "1.1", data["subjects"][0], data["queries"][0]
+            ),
+            ("经用户确认的统一社会信用代码", "period：2023年1月1日至查询日"),
+        )
+        for field in ("query_terms", "filters"):
+            free_text = copy.deepcopy(data)
+            free_text["queries"][0][field] = "未经确认、由 Agent 自行增加的条件"
+            with self.subTest(field=field), self.assertRaises(network_workpaper.ValidationError):
+                network_workpaper.validate_run(
+                    free_text,
+                    workpaper_root=self.root,
+                    formal_mode="final",
+                )
+        before_confirmation = copy.deepcopy(data)
+        before_confirmation["queries"][0]["query_time"] = "2026-07-19T09:59:59+08:00"
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(
+                before_confirmation,
+                workpaper_root=self.root,
+                formal_mode="final",
+            )
         self.assertEqual(network_workpaper.scope_preview(data)["status"], "user_confirmed")
         self.assertEqual(network_workpaper.manual_identifier_fields_pending(data), [])
         paths = network_workpaper.build_outputs(
             data, workpaper_root=self.root, output_dir=self.root / "v13-auto",
             template_docx=self.template, formal_mode="final", layout="two-layer", overwrite=False,
         )
+        internal_text = next(path for path in paths if path.suffix == ".md").read_text(encoding="utf-8")
+        self.assertIn("查询条件：经用户确认的统一社会信用代码", internal_text)
+        self.assertIn("筛选条件：period：2023年1月1日至查询日", internal_text)
         formal_table = Document(next(path for path in paths if path.suffix == ".docx")).tables[0]
         self.assertEqual(formal_table.rows[1].cells[2].text, SYNTHETIC_VALID_CREDIT_CODE)
         confirmed_query = data["queries"][0]

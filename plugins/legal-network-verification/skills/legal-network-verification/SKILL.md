@@ -36,7 +36,8 @@ description: Conduct authorized Chinese legal public-source verification for com
 - 默认时区为 `Asia/Shanghai`，可在运行文件中显式改为其他 IANA 时区。
 - 根据主体和项目选择 `general-person`、`general-company`、`private-fund` 或 `custom`；读取 `references/site-profiles.md`。
 - 统一社会信用代码只允许写入公司主体的 `credit_code`，并按 GB 32100 字符集和校验位验证；自然人不得使用该字段。
-- schema 1.1 的新查询必须先建立 `query_scope`，运行只读 `scope-preview`，并将范围状态确认至 `user_confirmed`；每条查询必须引用已确认的范围项。范围外的网站、域名、事项、主体、期间或方式一律拒绝。
+- schema 1.1 的新查询必须先建立 `query_scope`，运行只读 `scope-preview`，并将范围状态确认至 `user_confirmed`；每条查询必须引用已确认的范围项，且查询时间不得早于确认时间。范围外的网站、域名、事项、主体、期间或方式一律拒绝。
+- schema 1.1 不保存 Agent 自行填写的 `query_terms` 或 `filters`；底稿中的查询条件描述由脚本根据已确认的查询方式、主体类型和结构化 `conditions` 生成。
 - 公司 `formal_identifier_mode` 默认为 `user_fill`；仅在用户明确选择 `auto_fill_company_credit_code` 后，才可将已校验的统一社会信用代码填入正式记录。自然人只能 `user_fill`。
 - `formal-mode=final` 允许身份号码/代码人工填写位置为空，并保留正式记录第三列；draft 显示 `【待用户填写】`。完整身份证号码只允许用户在本 Skill 完成审计后自行补填，补填的归档版不得再交给本 Skill 读取、渲染、截图、审计或复核。
 - schema 1.0 仅兼容读取和构建；不得用 `prepare` 创建或向其追加 schema 1.1 查询。

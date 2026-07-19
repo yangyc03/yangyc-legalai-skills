@@ -46,7 +46,9 @@ schema 1.1 顶层必须有以下 `query_scope`。它是查询前的只读确认�
 
 ## `queries[]`
 
-schema 1.1 每项查询除既有字段外，必须有 `scope_item_id`、`matter_category_id`、`query_term_mode`、`condition_ids` 和 `conditions`。其主体、事项、网站、名称、方式、条件及 URL 域名必须与所引范围项精确相符；不相符即拒绝。查询结果、截图、措辞和敏感信息规则继续按本 Skill 的既有规范执行。
+schema 1.1 每项查询必须有 `scope_item_id`、`matter_category_id`、`query_term_mode`、`condition_ids` 和 `conditions`。其主体、事项、网站、名称、方式、条件及 URL 域名必须与所引范围项精确相符；不相符即拒绝。`query_time` 不得早于 `query_scope.confirmed_at`。
+
+schema 1.1 的查询项不得保存 `query_terms` 或 `filters` 自由文本。内部底稿和正式记录中的“查询条件”“筛选条件”由脚本根据已确认的 `query_term_mode`、主体类型和 `conditions` 确定性生成。schema 1.0 既有文件继续读取其原有 `query_terms` 和 `filters`。查询结果、截图、措辞和敏感信息规则继续按本 Skill 的既有规范执行。
 
 ## 通用边界
 

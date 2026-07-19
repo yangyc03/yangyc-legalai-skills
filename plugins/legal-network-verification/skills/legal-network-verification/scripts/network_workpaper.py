@@ -400,6 +400,38 @@ def scope_preview(data: dict[str, Any]) -> dict[str, Any]:
     return {"schema_version": "1.1", "status": data["query_scope"]["status"], "items": rows}
 
 
+def query_display_descriptions(
+    schema_version: str,
+    subject: dict[str, Any],
+    query: dict[str, Any],
+) -> tuple[str, str]:
+    """Return deterministic query descriptions without persisting schema 1.1 free text."""
+    if schema_version == "1.0":
+        return (
+            require_text(query.get("query_terms"), "query.query_terms"),
+            require_text(query.get("filters"), "query.filters"),
+        )
+
+    term_mode = require_text(query.get("query_term_mode"), "query.query_term_mode")
+    if term_mode == "exact_subject_name":
+        query_terms = "完整公司名称" if subject["type"] == "company" else "完整自然人姓名"
+    elif term_mode == "company_credit_code":
+        query_terms = "经用户确认的统一社会信用代码"
+    else:  # validate_run rejects this before build; keep direct callers fail-closed.
+        raise ValidationError(f"Unsupported query_term_mode: {term_mode}")
+
+    conditions = require_list(query.get("conditions"), "query.conditions")
+    filters = "；".join(
+        f"{require_text(condition.get('field'), 'query.condition.field')}："
+        f"{require_text(condition.get('value'), 'query.condition.value')}"
+        for condition in conditions
+        if isinstance(condition, dict)
+    )
+    if not filters or len(conditions) != sum(isinstance(item, dict) for item in conditions):
+        raise ValidationError("query.conditions must contain only structured condition objects.")
+    return query_terms, filters
+
+
 def check_wording(text: str, label: str) -> None:
     for phrase in FORBIDDEN_ABSOLUTE_PHRASES:
         if phrase in text:
@@ -784,8 +816,14 @@ def validate_run(
         subject_map[subject_id] = subject
 
     scope_map: dict[str, dict[str, Any]] = {}
+    scope_confirmed_at: datetime | None = None
     if schema_version == "1.1":
         scope_map = validate_query_scope(data, subject_map, allow_unconfirmed=allow_unconfirmed_scope)
+        if data["query_scope"]["status"] == QUERY_SCOPE_STATUS:
+            scope_confirmed_at = require_timestamp(
+                data["query_scope"].get("confirmed_at"),
+                "query_scope.confirmed_at",
+            )
 
     queries = require_list(data.get("queries"), "queries")
     if schema_version == "1.1" and data["query_scope"]["status"] != QUERY_SCOPE_STATUS and queries:
@@ -821,13 +859,22 @@ def validate_run(
             parsed = urlparse(url)
             if parsed.username or parsed.password or not parsed.hostname or not hostname_allowed(parsed.hostname, scope_item["allowed_domains"]):
                 raise ValidationError(f"Query URL domain exceeds confirmed scope: {evidence_id}")
-        require_timestamp(query.get("query_time"), f"queries[{index}].query_time")
-        require_text(query.get("query_terms"), f"queries[{index}].query_terms")
-        require_text(query.get("filters"), f"queries[{index}].filters")
+        query_time = require_timestamp(query.get("query_time"), f"queries[{index}].query_time")
         if schema_version == "1.1":
+            if any(field in query for field in ("query_terms", "filters")):
+                raise ValidationError(
+                    "schema 1.1 query_terms and filters are generated from confirmed structured scope."
+                )
+            if scope_confirmed_at is None or query_time < scope_confirmed_at:
+                raise ValidationError(
+                    f"Query time precedes confirmed query scope: {evidence_id}"
+                )
             expected_conditions = scope_item["conditions"]
             if query.get("condition_ids") != [item["condition_id"] for item in expected_conditions] or query.get("conditions") != expected_conditions:
                 raise ValidationError(f"Query conditions exceed confirmed scope: {evidence_id}")
+        else:
+            require_text(query.get("query_terms"), f"queries[{index}].query_terms")
+            require_text(query.get("filters"), f"queries[{index}].filters")
         status = require_text(query.get("status"), f"queries[{index}].status")
         if status not in ALLOWED_STATUSES:
             raise ValidationError(f"Invalid status for {evidence_id}: {status}")
@@ -1089,13 +1136,18 @@ def build_internal_markdown(
 
     lines.extend(["", "## 三、逐站核查记录及截图", ""])
     for index, query in enumerate(queries, start=1):
+        query_terms, filters = query_display_descriptions(
+            str(data.get("schema_version") or ""),
+            subject,
+            query,
+        )
         lines.extend(
             [
                 f"### {index}. {query['site_name']}",
                 "",
                 f"- 查询入口：<{query['url']}>",
-                f"- 查询条件：{query['query_terms']}",
-                f"- 筛选条件：{query['filters']}",
+                f"- 查询条件：{query_terms}",
+                f"- 筛选条件：{filters}",
                 f"- 查询结果：{query['result_summary']}",
                 f"- 身份判断：{query['identity_assessment']}",
                 f"- 结论级别：{STATUS_LABELS[query['status']]}",
@@ -1227,6 +1279,9 @@ def concise_formal_query_parts(
     index: int,
     query: dict[str, Any],
     subject_name: str,
+    *,
+    query_terms: str | None = None,
+    filters: str | None = None,
 ) -> tuple[str, str, str]:
     summary = str(query["result_summary"]).rstrip("。；; ")
     assessment = str(query["identity_assessment"]).rstrip("。；; ")
@@ -1255,7 +1310,8 @@ def concise_formal_query_parts(
     return (
         f"{index}. 就{subject_name}查询{query['site_name']}（",
         str(query["url"]),
-        f"），本次以{query['query_terms']}为主要条件，并结合{query['filters']}进行核查。{result_text}",
+        f"），本次以{query_terms or require_text(query.get('query_terms'), 'query.query_terms')}为主要条件，"
+        f"并结合{filters or require_text(query.get('filters'), 'query.filters')}进行核查。{result_text}",
     )
 
 
@@ -1430,10 +1486,18 @@ def build_formal_docx(data: dict[str, Any], template_path: Path, output_path: Pa
         query_marker._p.addprevious(new_xml)
         paragraph = Paragraph(new_xml, query_marker._parent)
         clear_paragraph_numbering(paragraph)
+        subject = subject_by_id[query["subject_id"]]
+        query_terms, filters = query_display_descriptions(
+            str(data.get("schema_version") or ""),
+            subject,
+            query,
+        )
         prefix, url, suffix = concise_formal_query_parts(
             index,
             query,
-            subject_by_id[query["subject_id"]]["name"],
+            subject["name"],
+            query_terms=query_terms,
+            filters=filters,
         )
         clear_paragraph_content(paragraph)
         prefix_run = paragraph.add_run(prefix)
