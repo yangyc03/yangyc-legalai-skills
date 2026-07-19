@@ -23,10 +23,12 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
+COMPATIBLE_SCHEMA_VERSIONS = {"1.0", "1.1"}
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 ALLOWED_PROFILES = {"general-person", "general-company", "private-fund", "custom"}
 ALLOWED_SUBJECT_TYPES = {"natural_person", "company"}
@@ -91,6 +93,8 @@ BIRTHDATE_LABEL_PATTERN = re.compile(
 )
 ZERO_WIDTH_SPACE = "\u200b"
 MASKED_ID_PATTERN = re.compile(r"^\d{10}\*{8}$")
+FORMAL_IDENTIFIER_MODES = {"user_fill", "auto_fill_company_credit_code"}
+QUERY_SCOPE_STATUS = "user_confirmed"
 SENSITIVE_NO_CAPTURE_KIND = "not_retained_sensitive_page"
 WATERMARKED_CAPTURE_KIND = "watermarked_page_only"
 OUTPUT_DOCX_FONT = "Noto Serif CJK SC"
@@ -136,6 +140,12 @@ SENSITIVE_LABEL_PATTERN = re.compile(
 
 class ValidationError(ValueError):
     """Raised when a run file violates the Skill contract."""
+
+
+def reject_unknown_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValidationError(f"{label} contains unsupported field(s): {', '.join(unknown)}")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -226,6 +236,17 @@ def company_credit_code_locations(value: Any, location: str) -> dict[str, str]:
     return allowed
 
 
+def approved_formal_company_credit_codes(value: dict[str, Any], location: str) -> frozenset[str]:
+    """Return only codes explicitly authorized for formal-record auto-fill."""
+    return frozenset(
+        validate_company_credit_code(subject.get("credit_code"), f"{location}.subjects[{index}].credit_code")
+        for index, subject in enumerate(require_list(value.get("subjects"), f"{location}.subjects"))
+        if isinstance(subject, dict)
+        and subject.get("type") == "company"
+        and str(subject.get("formal_identifier_mode") or "user_fill") == "auto_fill_company_credit_code"
+    )
+
+
 def scan_sensitive_values(
     value: Any,
     location: str = "run",
@@ -269,6 +290,146 @@ def validate_safe_relative_path(value: Any, label: str) -> Path:
     if path.is_absolute() or ".." in path.parts:
         raise ValidationError(f"{label} must be a safe relative path without '..'.")
     return path
+
+
+def normalized_hostname(value: Any, label: str) -> str:
+    hostname = str(value or "").strip().lower().rstrip(".")
+    if not hostname or any(char in hostname for char in " /\\:@"):
+        raise ValidationError(f"{label} must be a plain hostname.")
+    parsed = urlparse(f"https://{hostname}")
+    if parsed.hostname != hostname or parsed.port is not None:
+        raise ValidationError(f"{label} must be a valid hostname.")
+    return hostname
+
+
+def hostname_allowed(hostname: str, allowed_domains: list[str]) -> bool:
+    host = hostname.lower().rstrip(".")
+    return any(host == domain or host.endswith("." + domain) for domain in allowed_domains)
+
+
+def validate_query_scope(
+    data: dict[str, Any], subject_map: dict[str, dict[str, Any]], *, allow_unconfirmed: bool = False
+) -> dict[str, dict[str, Any]]:
+    scope = require_object(data.get("query_scope"), "query_scope")
+    reject_unknown_keys(scope, {"status", "confirmed_at", "selection_mode", "items"}, "query_scope")
+    status = require_text(scope.get("status"), "query_scope.status")
+    if status not in {QUERY_SCOPE_STATUS, "pending_confirmation"}:
+        raise ValidationError("query_scope.status must be user_confirmed or pending_confirmation.")
+    if status != QUERY_SCOPE_STATUS and not allow_unconfirmed:
+        raise ValidationError("query_scope.status must be user_confirmed before queries can run.")
+    if status == QUERY_SCOPE_STATUS:
+        require_timestamp(scope.get("confirmed_at"), "query_scope.confirmed_at")
+    selection_mode = require_text(scope.get("selection_mode"), "query_scope.selection_mode")
+    if selection_mode not in {"default_profile", "custom", "default_plus_custom"}:
+        raise ValidationError("Unsupported query_scope.selection_mode.")
+    items = require_list(scope.get("items"), "query_scope.items")
+    if not items:
+        if allow_unconfirmed and status != QUERY_SCOPE_STATUS:
+            return {}
+        raise ValidationError("query_scope.items must not be empty.")
+    result: dict[str, dict[str, Any]] = {}
+    for index, raw_item in enumerate(items):
+        label = f"query_scope.items[{index}]"
+        item = require_object(raw_item, label)
+        reject_unknown_keys(item, {"scope_item_id", "subject_id", "matter_category_id", "site_id", "site_name", "site_basis", "allowed_domains", "query_term_mode", "conditions"}, label)
+        item_id = require_text(item.get("scope_item_id"), f"{label}.scope_item_id")
+        if item_id in result:
+            raise ValidationError(f"Duplicate scope_item_id: {item_id}")
+        subject_id = require_text(item.get("subject_id"), f"{label}.subject_id")
+        if subject_id not in subject_map:
+            raise ValidationError(f"Scope item references unknown subject: {item_id}")
+        for field in ("matter_category_id", "site_id", "site_name"):
+            require_text(item.get(field), f"{label}.{field}")
+        basis = require_text(item.get("site_basis"), f"{label}.site_basis")
+        if basis not in {"default_profile", "user_specified", "user_confirmed_suggestion"}:
+            raise ValidationError(f"Unsupported site_basis: {basis}")
+        if selection_mode == "default_profile" and basis != "default_profile":
+            raise ValidationError("default_profile scope cannot include a custom website.")
+        if selection_mode == "custom" and basis == "default_profile":
+            raise ValidationError("custom scope cannot include a default-profile website.")
+        domains = require_list(item.get("allowed_domains"), f"{label}.allowed_domains")
+        if not domains:
+            raise ValidationError(f"{label}.allowed_domains must not be empty.")
+        normalized_domains = [normalized_hostname(domain, f"{label}.allowed_domains[{i}]") for i, domain in enumerate(domains)]
+        term_mode = require_text(item.get("query_term_mode"), f"{label}.query_term_mode")
+        if term_mode not in {"exact_subject_name", "company_credit_code"}:
+            raise ValidationError(f"Unsupported query_term_mode: {term_mode}")
+        subject = subject_map[subject_id]
+        if term_mode == "company_credit_code":
+            if subject["type"] != "company":
+                raise ValidationError("company_credit_code is only available for companies.")
+            validate_company_credit_code(subject.get("credit_code"), f"subjects[{subject_id}].credit_code")
+        conditions = require_list(item.get("conditions"), f"{label}.conditions")
+        if not conditions:
+            raise ValidationError(f"{label}.conditions must not be empty.")
+        condition_ids: set[str] = set()
+        for condition_index, raw_condition in enumerate(conditions):
+            condition_label = f"{label}.conditions[{condition_index}]"
+            condition = require_object(raw_condition, condition_label)
+            reject_unknown_keys(condition, {"condition_id", "field", "value"}, condition_label)
+            condition_id = require_text(condition.get("condition_id"), f"{condition_label}.condition_id")
+            if condition_id in condition_ids:
+                raise ValidationError(f"Duplicate condition_id in {item_id}")
+            condition_ids.add(condition_id)
+            require_text(condition.get("field"), f"{condition_label}.field")
+            require_text(condition.get("value"), f"{condition_label}.value")
+        if not any(condition["field"] == "period" and str(condition["value"]).strip() for condition in conditions):
+            raise ValidationError(f"{label} must include a non-empty period condition.")
+        normalized = copy.deepcopy(item)
+        normalized["allowed_domains"] = normalized_domains
+        result[item_id] = normalized
+    return result
+
+
+def scope_preview(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the read-only confirmed-or-pending query matrix before browsing."""
+    if str(data.get("schema_version") or "") != "1.1":
+        raise ValidationError("scope-preview requires schema_version 1.1.")
+    validate_run(data, formal_mode="none", allow_unconfirmed_scope=True)
+    subjects = {subject["subject_id"]: subject for subject in data["subjects"]}
+    rows = []
+    for item in data["query_scope"]["items"]:
+        rows.append({
+            "scope_item_id": item["scope_item_id"], "subject_id": item["subject_id"],
+            "subject_name": subjects[item["subject_id"]]["name"],
+            "matter_category_id": item["matter_category_id"], "site_id": item["site_id"],
+            "site_name": item["site_name"], "site_basis": item["site_basis"],
+            "allowed_domains": item["allowed_domains"], "query_term_mode": item["query_term_mode"],
+            "conditions": item["conditions"],
+        })
+    return {"schema_version": "1.1", "status": data["query_scope"]["status"], "items": rows}
+
+
+def query_display_descriptions(
+    schema_version: str,
+    subject: dict[str, Any],
+    query: dict[str, Any],
+) -> tuple[str, str]:
+    """Return deterministic query descriptions without persisting schema 1.1 free text."""
+    if schema_version == "1.0":
+        return (
+            require_text(query.get("query_terms"), "query.query_terms"),
+            require_text(query.get("filters"), "query.filters"),
+        )
+
+    term_mode = require_text(query.get("query_term_mode"), "query.query_term_mode")
+    if term_mode == "exact_subject_name":
+        query_terms = "完整公司名称" if subject["type"] == "company" else "完整自然人姓名"
+    elif term_mode == "company_credit_code":
+        query_terms = "经用户确认的统一社会信用代码"
+    else:  # validate_run rejects this before build; keep direct callers fail-closed.
+        raise ValidationError(f"Unsupported query_term_mode: {term_mode}")
+
+    conditions = require_list(query.get("conditions"), "query.conditions")
+    filters = "；".join(
+        f"{require_text(condition.get('field'), 'query.condition.field')}："
+        f"{require_text(condition.get('value'), 'query.condition.value')}"
+        for condition in conditions
+        if isinstance(condition, dict)
+    )
+    if not filters or len(conditions) != sum(isinstance(item, dict) for item in conditions):
+        raise ValidationError("query.conditions must contain only structured condition objects.")
+    return query_terms, filters
 
 
 def check_wording(text: str, label: str) -> None:
@@ -471,9 +632,7 @@ def artifact_audit(
     allowed_company_credit_codes: frozenset[str] = frozenset()
     if run_data is not None:
         validate_run(run_data, formal_mode="draft")
-        allowed_company_credit_codes = frozenset(
-            company_credit_code_locations(run_data, "run").values()
-        )
+        allowed_company_credit_codes = approved_formal_company_credit_codes(run_data, "run")
     files = [root] if root.is_file() else sorted(path for path in root.rglob("*") if path.is_file())
     issues: list[str] = []
     scanned = 0
@@ -599,9 +758,11 @@ def validate_run(
     *,
     workpaper_root: Path | None = None,
     formal_mode: str = "draft",
+    allow_unconfirmed_scope: bool = False,
 ) -> None:
     scan_sensitive_values(data)
-    if data.get("schema_version") != SCHEMA_VERSION:
+    schema_version = str(data.get("schema_version") or "")
+    if schema_version not in COMPATIBLE_SCHEMA_VERSIONS:
         raise ValidationError(f"Unsupported schema_version: {data.get('schema_version')}")
 
     run = require_object(data.get("run"), "run")
@@ -635,6 +796,13 @@ def validate_run(
             raise ValidationError(f"Invalid subject type for {subject_id}: {subject_type}")
         require_text(subject.get("name"), f"subjects[{index}].name")
         require_text(subject.get("role"), f"subjects[{index}].role")
+        identifier_mode = str(subject.get("formal_identifier_mode") or "user_fill").strip()
+        if identifier_mode not in FORMAL_IDENTIFIER_MODES:
+            raise ValidationError(f"Invalid formal_identifier_mode for {subject_id}: {identifier_mode}")
+        if subject_type == "natural_person" and identifier_mode != "user_fill":
+            raise ValidationError(f"Natural person formal_identifier_mode must be user_fill: {subject_id}")
+        if subject_type == "company" and (identifier_mode == "auto_fill_company_credit_code" or str(subject.get("credit_code") or "").strip()):
+            validate_company_credit_code(subject.get("credit_code"), f"subjects[{index}].credit_code")
         if subject_type == "natural_person" and str(subject.get("credit_code") or "").strip():
             raise ValidationError(f"Natural person must not use credit_code field: {subject_id}")
         masked_id = str(subject.get("masked_id_number") or "").strip()
@@ -647,7 +815,19 @@ def validate_run(
             )
         subject_map[subject_id] = subject
 
+    scope_map: dict[str, dict[str, Any]] = {}
+    scope_confirmed_at: datetime | None = None
+    if schema_version == "1.1":
+        scope_map = validate_query_scope(data, subject_map, allow_unconfirmed=allow_unconfirmed_scope)
+        if data["query_scope"]["status"] == QUERY_SCOPE_STATUS:
+            scope_confirmed_at = require_timestamp(
+                data["query_scope"].get("confirmed_at"),
+                "query_scope.confirmed_at",
+            )
+
     queries = require_list(data.get("queries"), "queries")
+    if schema_version == "1.1" and data["query_scope"]["status"] != QUERY_SCOPE_STATUS and queries:
+        raise ValidationError("Unconfirmed query scope cannot contain queries.")
     evidence_ids: set[str] = set()
     for index, raw in enumerate(queries):
         query = require_object(raw, f"queries[{index}]")
@@ -658,14 +838,43 @@ def validate_run(
         subject_id = require_text(query.get("subject_id"), f"queries[{index}].subject_id")
         if subject_id not in subject_map:
             raise ValidationError(f"Query references unknown subject: {subject_id}")
+        if schema_version == "1.1":
+            scope_item_id = require_text(query.get("scope_item_id"), f"queries[{index}].scope_item_id")
+            scope_item = scope_map.get(scope_item_id)
+            if scope_item is None:
+                raise ValidationError(f"Query references unknown scope item: {evidence_id}")
+            if subject_id != scope_item["subject_id"]:
+                raise ValidationError(f"Query subject exceeds confirmed scope: {evidence_id}")
+            for field in ("matter_category_id", "site_id", "site_name"):
+                if require_text(query.get(field), f"queries[{index}].{field}") != scope_item[field]:
+                    raise ValidationError(f"Query {field} exceeds confirmed scope: {evidence_id}")
+            if str(query.get("query_term_mode") or "").strip() != scope_item["query_term_mode"]:
+                raise ValidationError(f"Query term mode exceeds confirmed scope: {evidence_id}")
         require_text(query.get("site_id"), f"queries[{index}].site_id")
         require_text(query.get("site_name"), f"queries[{index}].site_name")
         url = require_text(query.get("url"), f"queries[{index}].url")
         if not re.match(r"^https?://", url, re.IGNORECASE):
             raise ValidationError(f"Query URL must use HTTP(S): {evidence_id}")
-        require_timestamp(query.get("query_time"), f"queries[{index}].query_time")
-        require_text(query.get("query_terms"), f"queries[{index}].query_terms")
-        require_text(query.get("filters"), f"queries[{index}].filters")
+        if schema_version == "1.1":
+            parsed = urlparse(url)
+            if parsed.username or parsed.password or not parsed.hostname or not hostname_allowed(parsed.hostname, scope_item["allowed_domains"]):
+                raise ValidationError(f"Query URL domain exceeds confirmed scope: {evidence_id}")
+        query_time = require_timestamp(query.get("query_time"), f"queries[{index}].query_time")
+        if schema_version == "1.1":
+            if any(field in query for field in ("query_terms", "filters")):
+                raise ValidationError(
+                    "schema 1.1 query_terms and filters are generated from confirmed structured scope."
+                )
+            if scope_confirmed_at is None or query_time < scope_confirmed_at:
+                raise ValidationError(
+                    f"Query time precedes confirmed query scope: {evidence_id}"
+                )
+            expected_conditions = scope_item["conditions"]
+            if query.get("condition_ids") != [item["condition_id"] for item in expected_conditions] or query.get("conditions") != expected_conditions:
+                raise ValidationError(f"Query conditions exceed confirmed scope: {evidence_id}")
+        else:
+            require_text(query.get("query_terms"), f"queries[{index}].query_terms")
+            require_text(query.get("filters"), f"queries[{index}].filters")
         status = require_text(query.get("status"), f"queries[{index}].status")
         if status not in ALLOWED_STATUSES:
             raise ValidationError(f"Invalid status for {evidence_id}: {status}")
@@ -732,25 +941,33 @@ def validate_run(
         people = require_list(formal.get("query_people"), "run.formal_record.query_people")
         if not people or any(not str(item).strip() for item in people):
             raise ValidationError("run.formal_record.query_people must not be empty in final mode.")
-        for subject in subjects:
-            subject_id = subject["subject_id"]
-            if subject["type"] == "company":
-                require_text(subject.get("credit_code"), f"subjects[{subject_id}].credit_code")
-            else:
-                require_text(
-                    subject.get("masked_id_number"),
-                    f"subjects[{subject_id}].masked_id_number",
-                )
+
+
+def manual_identifier_fields_pending(data: dict[str, Any]) -> list[str]:
+    return [
+        f"{subject['subject_id']}.formal_identifier_user_fill"
+        for subject in require_list(data.get("subjects"), "subjects")
+        if not (subject["type"] == "company" and str(subject.get("formal_identifier_mode") or "user_fill") == "auto_fill_company_credit_code")
+    ]
 
 
 def prepare_run(input_data: dict[str, Any]) -> dict[str, Any]:
     scan_sensitive_values(input_data, "input")
+    requested_schema = str(input_data.get("schema_version") or SCHEMA_VERSION)
+    if requested_schema not in COMPATIBLE_SCHEMA_VERSIONS:
+        raise ValidationError(f"Unsupported schema_version: {requested_schema}")
+    if requested_schema == "1.0":
+        raise ValidationError("prepare only creates schema 1.1; schema 1.0 is validate/build read compatibility only.")
+    if input_data.get("queries"):
+        raise ValidationError(
+            "prepare only creates an empty query list; confirm query_scope with scope-preview before recording queries."
+        )
     project = require_object(input_data.get("project"), "project")
     subjects = copy.deepcopy(require_list(input_data.get("subjects"), "subjects"))
     formal_input = require_object(input_data.get("formal_record", {}), "formal_record")
     now = datetime.now(ZoneInfo(DEFAULT_TIMEZONE))
     prepared = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": requested_schema,
         "run": {
             "run_id": str(input_data.get("run_id") or f"NQ-{now:%Y%m%d-%H%M%S}"),
             "timezone": str(input_data.get("timezone") or DEFAULT_TIMEZONE),
@@ -768,10 +985,13 @@ def prepare_run(input_data: dict[str, Any]) -> dict[str, Any]:
             },
         },
         "subjects": subjects,
+        "query_scope": copy.deepcopy(input_data.get("query_scope", {
+            "status": "pending_confirmation", "confirmed_at": "", "selection_mode": "custom", "items": []
+        })),
         "queries": [],
         "opinion_wording_requested": bool(input_data.get("opinion_wording_requested", False)),
     }
-    validate_run(prepared, formal_mode="draft")
+    validate_run(prepared, formal_mode="draft", allow_unconfirmed_scope=True)
     return prepared
 
 
@@ -916,13 +1136,18 @@ def build_internal_markdown(
 
     lines.extend(["", "## 三、逐站核查记录及截图", ""])
     for index, query in enumerate(queries, start=1):
+        query_terms, filters = query_display_descriptions(
+            str(data.get("schema_version") or ""),
+            subject,
+            query,
+        )
         lines.extend(
             [
                 f"### {index}. {query['site_name']}",
                 "",
                 f"- 查询入口：<{query['url']}>",
-                f"- 查询条件：{query['query_terms']}",
-                f"- 筛选条件：{query['filters']}",
+                f"- 查询条件：{query_terms}",
+                f"- 筛选条件：{filters}",
                 f"- 查询结果：{query['result_summary']}",
                 f"- 身份判断：{query['identity_assessment']}",
                 f"- 结论级别：{STATUS_LABELS[query['status']]}",
@@ -1035,6 +1260,12 @@ def set_cell_text(cell: Any, value: str, *, bold: bool = False) -> None:
             set_run_font(run, 10.5, bold=bold)
 
 
+def formal_identifier_text(subject: dict[str, Any], formal_mode: str) -> str:
+    if subject["type"] == "company" and str(subject.get("formal_identifier_mode") or "user_fill") == "auto_fill_company_credit_code":
+        return str(subject.get("credit_code") or "").strip()
+    return "【待用户填写】" if formal_mode == "draft" else ""
+
+
 def clear_paragraph_numbering(paragraph: Any) -> None:
     from docx.oxml.ns import qn
 
@@ -1048,6 +1279,9 @@ def concise_formal_query_parts(
     index: int,
     query: dict[str, Any],
     subject_name: str,
+    *,
+    query_terms: str | None = None,
+    filters: str | None = None,
 ) -> tuple[str, str, str]:
     summary = str(query["result_summary"]).rstrip("。；; ")
     assessment = str(query["identity_assessment"]).rstrip("。；; ")
@@ -1076,7 +1310,8 @@ def concise_formal_query_parts(
     return (
         f"{index}. 就{subject_name}查询{query['site_name']}（",
         str(query["url"]),
-        f"），本次以{query['query_terms']}为主要条件，并结合{query['filters']}进行核查。{result_text}",
+        f"），本次以{query_terms or require_text(query.get('query_terms'), 'query.query_terms')}为主要条件，"
+        f"并结合{filters or require_text(query.get('filters'), 'query.filters')}进行核查。{result_text}",
     )
 
 
@@ -1229,15 +1464,7 @@ def build_formal_docx(data: dict[str, Any], template_path: Path, output_path: Pa
                 row._tr.addprevious(new_row._tr)
                 if len(new_row.cells) < 3:
                     raise ValidationError("DOCX template subject table must contain at least three columns.")
-                identifier = str(
-                    subject.get("credit_code")
-                    or subject.get("masked_id_number")
-                    or (
-                        "【由用户填写统一社会信用代码】"
-                        if subject["type"] == "company"
-                        else "【由用户填写脱敏身份证号码】"
-                    )
-                )
+                identifier = formal_identifier_text(subject, formal_mode)
                 set_cell_text(new_row.cells[0], subject["role"])
                 set_cell_text(new_row.cells[1], subject["name"])
                 set_cell_text(new_row.cells[2], identifier)
@@ -1259,10 +1486,18 @@ def build_formal_docx(data: dict[str, Any], template_path: Path, output_path: Pa
         query_marker._p.addprevious(new_xml)
         paragraph = Paragraph(new_xml, query_marker._parent)
         clear_paragraph_numbering(paragraph)
+        subject = subject_by_id[query["subject_id"]]
+        query_terms, filters = query_display_descriptions(
+            str(data.get("schema_version") or ""),
+            subject,
+            query,
+        )
         prefix, url, suffix = concise_formal_query_parts(
             index,
             query,
-            subject_by_id[query["subject_id"]]["name"],
+            subject["name"],
+            query_terms=query_terms,
+            filters=filters,
         )
         clear_paragraph_content(paragraph)
         prefix_run = paragraph.add_run(prefix)
@@ -1404,6 +1639,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare, validate, and build legal network workpapers.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    preview = subparsers.add_parser(
+        "scope-preview", help="Print the read-only subject/issue/site/condition matrix before browsing."
+    )
+    preview.add_argument("run_file", type=Path)
+
     doctor = subparsers.add_parser("doctor", help="Check portable runtime capabilities.")
     doctor.add_argument(
         "--browser",
@@ -1452,7 +1692,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        if args.command == "doctor":
+        if args.command == "scope-preview":
+            print(json.dumps(scope_preview(load_json(args.run_file)), ensure_ascii=False, indent=2))
+        elif args.command == "doctor":
             report = doctor_report(args.browser)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if not report["python"]["ok"] or not all(report["dependencies"].values()):
@@ -1488,6 +1730,9 @@ def main() -> int:
             )
             for path in paths:
                 print(path)
+            pending = manual_identifier_fields_pending(load_json(args.run_file))
+            if pending:
+                print("manual_identifier_fields_pending: " + ", ".join(pending))
     except (FileExistsError, FileNotFoundError, OSError, ValidationError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

@@ -1,6 +1,6 @@
 {
   "name": "legal-network-verification",
-  "version": "1.2.1-beta",
+  "version": "1.3.0-beta",
   "description": "Portable Chinese legal public-source verification with privacy gates, page-only evidence and two-layer workpapers.",
   "author": {
     "name": "Yingchao Yang",
