@@ -724,7 +724,8 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, package_text)
         self.assertRegex(package_text, r"\bPAGE\b")
-        self.assertIn("身份证号码（脱敏）", package_text)
+        self.assertIn("统一社会信用代码/身份证号码", package_text)
+        self.assertNotIn("身份证号码（脱敏）", package_text)
 
         document = Document(BUNDLED_TEMPLATE)
         properties = document.core_properties
@@ -915,6 +916,15 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         )
 
         skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        privacy_text = (plugin_root / "PRIVACY.md").read_text(encoding="utf-8")
+        sensitive_rule_text = (
+            SKILL_ROOT / "references" / "privacy-and-sensitive-query.md"
+        ).read_text(encoding="utf-8")
+        for policy_text in (privacy_text, sensitive_rule_text):
+            self.assertIn("全部技术检查", policy_text)
+            self.assertIn("自行补填", policy_text)
+            self.assertIn("不得再次", policy_text)
+        self.assertNotIn("Skill只生成脱敏版本", sensitive_rule_text)
         for forbidden in (
             "/Users/",
             "OneDrive",
