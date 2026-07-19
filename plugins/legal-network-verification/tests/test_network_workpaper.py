@@ -323,7 +323,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         self.assertTrue(all(path.parent == flat_root for path in paths))
         self.assertTrue(any(path.name.endswith("_草稿.docx") for path in paths))
 
-    def test_final_mode_requires_location_people_and_identifiers(self) -> None:
+    def test_final_mode_requires_location_and_people_but_allows_user_fill_identifiers(self) -> None:
         cases = [
             ("query_location", ""),
             ("query_people", []),
@@ -341,8 +341,18 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
 
         data = copy.deepcopy(self.data)
         data["subjects"][0]["masked_id_number"] = ""
-        with self.assertRaises(network_workpaper.ValidationError):
-            network_workpaper.validate_run(data, workpaper_root=self.root, formal_mode="final")
+        network_workpaper.validate_run(data, workpaper_root=self.root, formal_mode="final")
+        self.assertEqual(
+            network_workpaper.manual_identifier_fields_pending(data),
+            ["SUB-001.formal_identifier_user_fill", "SUB-002.formal_identifier_user_fill"],
+        )
+        paths = network_workpaper.build_outputs(
+            data, workpaper_root=self.root, output_dir=self.root / "user-fill-final",
+            template_docx=self.template, formal_mode="final", layout="two-layer", overwrite=False,
+        )
+        table = Document(next(path for path in paths if path.suffix == ".docx")).tables[0]
+        self.assertEqual([row.cells[2].text for row in table.rows[1:3]], ["", ""])
+        self.assertTrue(network_workpaper.artifact_audit(self.root / "user-fill-final")["ok"])
 
     def test_restricted_and_failed_queries_cannot_claim_no_record(self) -> None:
         for status in ("access_limited", "failed"):
@@ -418,6 +428,8 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
                     network_workpaper.validate_run(data, formal_mode="draft")
 
     def test_credit_code_prepare_validate_build_and_contextual_audit(self) -> None:
+        subjects = copy.deepcopy(self.data["subjects"])
+        subjects[1]["formal_identifier_mode"] = "auto_fill_company_credit_code"
         prepared = network_workpaper.prepare_run(
             {
                 "run_id": "NQ-20260718-USCC",
@@ -425,7 +437,19 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
                 "profile": "custom",
                 "project": copy.deepcopy(self.data["run"]["project"]),
                 "formal_record": copy.deepcopy(self.data["run"]["formal_record"]),
-                "subjects": copy.deepcopy(self.data["subjects"]),
+                "subjects": subjects,
+                "query_scope": {
+                    "status": "user_confirmed",
+                    "confirmed_at": "2026-07-18T10:00:00+08:00",
+                    "selection_mode": "custom",
+                    "items": [{
+                        "scope_item_id": "SCOPE-001", "subject_id": "SUB-002",
+                        "matter_category_id": "company.registration", "site_id": "registry",
+                        "site_name": "匿名官方公示网站", "site_basis": "user_specified",
+                        "allowed_domains": ["example.invalid"], "query_term_mode": "company_credit_code",
+                        "conditions": [{"condition_id": "COND-001", "field": "period", "value": "2023年1月1日至查询日"}],
+                    }],
+                },
             }
         )
         network_workpaper.validate_run(prepared, formal_mode="final")
@@ -460,14 +484,119 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         self.assertFalse(standalone_report["ok"])
         self.assertEqual(standalone_report["validated_company_credit_codes"], 0)
 
+    def test_prepare_rejects_prepopulated_queries(self) -> None:
+        input_data = {
+            "project": copy.deepcopy(self.data["run"]["project"]),
+            "subjects": copy.deepcopy(self.data["subjects"]),
+            "queries": [copy.deepcopy(self.data["queries"][0])],
+        }
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.prepare_run(input_data)
+
+    def test_natural_person_auto_fill_and_invalid_company_code_fail_closed(self) -> None:
+        natural_person = copy.deepcopy(self.data)
+        natural_person["subjects"][0]["formal_identifier_mode"] = "auto_fill_company_credit_code"
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(natural_person, workpaper_root=self.root)
+
+        invalid_company = copy.deepcopy(self.data)
+        invalid_company["subjects"][1]["credit_code"] = SYNTHETIC_VALID_CREDIT_CODE[:-1] + "1"
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(invalid_company, workpaper_root=self.root)
+
+    def test_sensitive_candidate_in_query_or_manual_fill_artifact_fails_closed(self) -> None:
+        for field in ("query_terms", "result_summary"):
+            data = copy.deepcopy(self.data)
+            data["queries"][0][field] = SYNTHETIC_VALID_CREDIT_CODE
+            with self.subTest(field=field), self.assertRaises(network_workpaper.ValidationError):
+                network_workpaper.validate_run(data, workpaper_root=self.root)
+
+        data = copy.deepcopy(self.data)
+        data["schema_version"] = "1.1"
+        data["subjects"] = [copy.deepcopy(self.data["subjects"][1])]
+        data["queries"] = []
+        data["query_scope"] = {
+            "status": "user_confirmed", "confirmed_at": "2026-07-19T10:00:00+08:00",
+            "selection_mode": "custom", "items": [{
+                "scope_item_id": "SCOPE-001", "subject_id": "SUB-002",
+                "matter_category_id": "company.registration", "site_id": "registry",
+                "site_name": "匿名官方公示网站", "site_basis": "user_specified",
+                "allowed_domains": ["example.invalid"], "query_term_mode": "exact_subject_name",
+                "conditions": [{"condition_id": "COND-001", "field": "period", "value": "2023年1月1日至查询日"}],
+            }],
+        }
+        data["query_scope"]["items"][0]["conditions"][0]["value"] = SYNTHETIC_VALID_CREDIT_CODE
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(data)
+
+        archive = self.root / "manual-fill-archive"
+        archive.mkdir()
+        manual_docx = archive / "record.docx"
+        make_template(manual_docx)
+        document = Document(manual_docx)
+        document.tables[0].cell(1, 2).text = SYNTHETIC_FULL_ID
+        document.save(manual_docx)
+        report = network_workpaper.artifact_audit(archive)
+        self.assertFalse(report["ok"])
+
+    def test_v13_scope_preview_enforces_confirmed_domain_and_identifier_mode(self) -> None:
+        data = copy.deepcopy(self.data)
+        data["schema_version"] = "1.1"
+        data["subjects"] = [copy.deepcopy(self.data["subjects"][1])]
+        data["subjects"][0]["formal_identifier_mode"] = "auto_fill_company_credit_code"
+        query = copy.deepcopy(self.data["queries"][0])
+        query.update({
+            "subject_id": "SUB-002", "site_id": "registry", "site_name": "匿名官方公示网站",
+            "scope_item_id": "SCOPE-001", "matter_category_id": "company.registration",
+            "query_term_mode": "company_credit_code", "condition_ids": ["COND-001"],
+            "conditions": [{"condition_id": "COND-001", "field": "period", "value": "2023年1月1日至查询日"}],
+            "url": "https://example.invalid/registry/search", "query_terms": "完整主体名称：示例科技有限公司",
+            "filters": "period：2023年1月1日至查询日",
+        })
+        data["queries"] = [query]
+        data["query_scope"] = {
+            "status": "user_confirmed", "confirmed_at": "2026-07-19T10:00:00+08:00",
+            "selection_mode": "custom", "items": [{
+                "scope_item_id": "SCOPE-001", "subject_id": "SUB-002",
+                "matter_category_id": "company.registration", "site_id": "registry",
+                "site_name": "匿名官方公示网站", "site_basis": "user_specified",
+                "allowed_domains": ["example.invalid"], "query_term_mode": "company_credit_code",
+                "conditions": [{"condition_id": "COND-001", "field": "period", "value": "2023年1月1日至查询日"}],
+            }],
+        }
+        network_workpaper.validate_run(data, workpaper_root=self.root, formal_mode="final")
+        self.assertEqual(network_workpaper.scope_preview(data)["status"], "user_confirmed")
+        self.assertEqual(network_workpaper.manual_identifier_fields_pending(data), [])
+        paths = network_workpaper.build_outputs(
+            data, workpaper_root=self.root, output_dir=self.root / "v13-auto",
+            template_docx=self.template, formal_mode="final", layout="two-layer", overwrite=False,
+        )
+        formal_table = Document(next(path for path in paths if path.suffix == ".docx")).tables[0]
+        self.assertEqual(formal_table.rows[1].cells[2].text, SYNTHETIC_VALID_CREDIT_CODE)
+        confirmed_query = data["queries"][0]
+        data["queries"] = []
+        data["query_scope"]["status"] = "pending_confirmation"
+        data["query_scope"]["confirmed_at"] = ""
+        self.assertEqual(network_workpaper.scope_preview(data)["status"], "pending_confirmation")
+        data["queries"] = [confirmed_query]
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(data, workpaper_root=self.root, formal_mode="draft")
+        data["query_scope"]["status"] = "user_confirmed"
+        data["query_scope"]["confirmed_at"] = "2026-07-19T10:00:00+08:00"
+        data["queries"][0]["url"] = "https://outside.invalid/"
+        with self.assertRaises(network_workpaper.ValidationError):
+            network_workpaper.validate_run(data, workpaper_root=self.root, formal_mode="draft")
+
     def test_artifact_audit_allows_only_exact_context_code_and_never_filename(self) -> None:
         artifact_root = self.root / "credit-code-audit"
         artifact_root.mkdir()
+        audit_run = copy.deepcopy(self.data)
+        audit_run["subjects"][1]["formal_identifier_mode"] = "auto_fill_company_credit_code"
         (artifact_root / "record.md").write_text(
             SYNTHETIC_OTHER_VALID_CREDIT_CODE,
             encoding="utf-8",
         )
-        report = network_workpaper.artifact_audit(artifact_root, run_data=self.data)
+        report = network_workpaper.artifact_audit(artifact_root, run_data=audit_run)
         self.assertFalse(report["ok"])
 
         (artifact_root / "record.md").write_text(
@@ -476,7 +605,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         )
         filename = artifact_root / f"{SYNTHETIC_VALID_CREDIT_CODE}.txt"
         filename.write_text("匿名记录", encoding="utf-8")
-        report = network_workpaper.artifact_audit(artifact_root, run_data=self.data)
+        report = network_workpaper.artifact_audit(artifact_root, run_data=audit_run)
         self.assertFalse(report["ok"])
         self.assertTrue(
             any("filename:" in issue for issue in report["issues"]),
@@ -748,7 +877,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         manifest = json.loads(
             (plugin_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(manifest["version"], "1.2.1-beta")
+        self.assertEqual(manifest["version"], "1.3.0-beta")
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertTrue((plugin_root / "LICENSE").is_file())
         self.assertTrue((plugin_root / "PRIVACY.md").is_file())

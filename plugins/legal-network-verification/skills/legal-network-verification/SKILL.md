@@ -7,9 +7,10 @@ description: Conduct authorized Chinese legal public-source verification for com
 
 ## 维护信息
 
-- 版本：v1.2.1-beta
+- 版本：v1.3.0-beta
 - 维护者：Yingchao Yang
 - 许可：Apache License 2.0
+- 最近更新：2026-07-19
 - 适用语境：中国法律公开信息核查；法律依据和网站功能均需按项目时点复核。
 
 ## 任务边界
@@ -30,12 +31,15 @@ description: Conduct authorized Chinese legal public-source verification for com
 输出目录：
 ```
 
-可选输入包括项目类型、关联机构、主体角色、统一社会信用代码、正式记录使用的脱敏身份证号码、指定网站及已脱敏截图。
+可选输入包括项目类型、关联机构、主体角色、统一社会信用代码、既有脱敏身份辅助字段、指定网站及已脱敏截图。用户须预先确定主体、事项、网站、域名、期间和查询方式；自然人只能由用户明确列入，不从公司派生关联自然人。
 
 - 默认时区为 `Asia/Shanghai`，可在运行文件中显式改为其他 IANA 时区。
 - 根据主体和项目选择 `general-person`、`general-company`、`private-fund` 或 `custom`；读取 `references/site-profiles.md`。
 - 统一社会信用代码只允许写入公司主体的 `credit_code`，并按 GB 32100 字符集和校验位验证；自然人不得使用该字段。
-- 正式版缺少查询地点、查询人、统一社会信用代码或合规脱敏身份证号码时，拒绝生成。
+- schema 1.1 的新查询必须先建立 `query_scope`，运行只读 `scope-preview`，并将范围状态确认至 `user_confirmed`；每条查询必须引用已确认的范围项。范围外的网站、域名、事项、主体、期间或方式一律拒绝。
+- 公司 `formal_identifier_mode` 默认为 `user_fill`；仅在用户明确选择 `auto_fill_company_credit_code` 后，才可将已校验的统一社会信用代码填入正式记录。自然人只能 `user_fill`。
+- `formal-mode=final` 允许身份号码/代码人工填写位置为空，并保留正式记录第三列；draft 显示 `【待用户填写】`。完整身份证号码只允许用户在本 Skill 完成审计后自行补填，补填的归档版不得再交给本 Skill 读取、渲染、截图、审计或复核。
+- schema 1.0 仅兼容读取和构建；不得用 `prepare` 创建或向其追加 schema 1.1 查询。
 
 ## 个人信息强制规则
 
@@ -50,12 +54,12 @@ description: Conduct authorized Chinese legal public-source verification for com
 
 ## 核心流程
 
-1. 锚定项目、事项、主体、期间和输出目录。多候选主体先让用户确认，不自行补全名称。
-2. 运行 `doctor` 判断当前能力，然后读取 `references/site-profiles.md` 选择网站。实际查询前记录当次有效入口，不长期信赖固定网址。
+1. 锚定项目、事项、主体、期间和输出目录。多候选主体先让用户确认，不自行补全名称或扩展自然人。
+2. 运行 `doctor` 判断当前能力，然后读取 `references/site-profiles.md`。将主体、事项、网站、域名、期间和查询方式写入 schema 1.1 `query_scope`，运行 `scope-preview` 供用户确认；未达 `user_confirmed` 不得查询。
 3. 涉及同名、身份要素或结论措辞时读取 `references/identity-and-wording-rules.md`。
 4. 在授权范围内使用当前 Agent 可用的交互浏览器或用户指定会话。不读取 Cookie、Token、密码或浏览器存储，不绕过验证码和访问限制。
 5. 截取网页 viewport 或必要的页面矩形，不截取浏览器收藏夹栏、侧边栏、系统桌面或其他无关区域。在临时目录取得原始截图，调用 `scripts/watermark_capture.py` 生成项目唯一留存版。
-6. 使用 `prepare` 创建 `network-verification.json`，按 `references/run-schema.md` 填写 `queries[]`。完整身份证号码、出生日期、手机、邮箱、授权原文和浏览器凭证不得落盘。
+6. 使用 `prepare` 创建 schema 1.1 `network-verification.json`，按 `references/run-schema.md` 填写 `queries[]`。新查询逐项引用已确认范围及条件；完整身份证号码、出生日期、手机、邮箱、授权原文和浏览器凭证不得落盘。
 7. 使用 `validate` 检查主体、状态、网址、查询时间、截图路径和结论措辞。失败、受限或未完成查询不得解释为无记录。
 8. 使用 `build` 生成内部 Markdown 和可选 DOCX。默认 `two-layer`：内部底稿输出至 `01-内部底稿`，正式记录输出至 `02-正式记录`。
 9. 交付前运行 `artifact-audit`，检查文本、常见图片元数据及 DOCX 内嵌图片元数据，并对 DOCX 进行结构检查和逐页渲染检查。成果含公司统一社会信用代码时必须通过 `--run-file` 提供当前已验证运行文件；只精确放行该文件中有效的公司代码，无上下文时失败关闭。不修改、移动或覆盖客户原始文件。
@@ -102,6 +106,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 ```text
 python scripts/network_workpaper.py doctor --browser unknown
 python scripts/network_workpaper.py prepare input.json --output network-verification.json
+python scripts/network_workpaper.py scope-preview network-verification.json
 python scripts/network_workpaper.py validate network-verification.json --workpaper-root WORKPAPER_ROOT
 python scripts/network_workpaper.py template-check TEMPLATE.docx
 python scripts/network_workpaper.py build network-verification.json --workpaper-root WORKPAPER_ROOT --output-dir OUTPUT_DIR --formal-mode draft --layout two-layer
