@@ -1,6 +1,6 @@
 {
   "name": "legal-network-verification",
-  "version": "2.0.0-beta",
+  "version": "2.0.1-beta",
   "description": "Portable Chinese legal public-source verification with user-operated authentication handoff, strict zero-result evidence gates and two-layer workpapers.",
   "author": {
     "name": "Yingchao Yang",

@@ -924,7 +924,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         manifest = json.loads(
             (plugin_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(manifest["version"], "2.0.0-beta")
+        self.assertEqual(manifest["version"], "2.0.1-beta")
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertTrue((plugin_root / "LICENSE").is_file())
         self.assertTrue((plugin_root / "PRIVACY.md").is_file())

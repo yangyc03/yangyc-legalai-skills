@@ -7,7 +7,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 
 ## 维护信息
 
-- 版本：v2.0.0-beta
+- 版本：v2.0.1-beta
 - 维护者：Yingchao Yang
 - 许可：Apache License 2.0
 - 最近更新：2026-08-13
@@ -56,7 +56,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 ## 核心流程
 
 1. 锚定项目、事项、主体、期间和输出目录。多候选主体先让用户确认，不自行补全名称或扩展自然人。
-2. 运行 `doctor` 判断当前能力，然后读取 `references/site-profiles.md`。将主体、事项、网站、域名、期间和查询方式写入 schema 1.2 `query_scope`，运行 `scope-preview` 供用户确认；未达 `user_confirmed` 不得查询。
+2. 运行 `doctor` 判断当前能力，然后读取 `references/site-profiles.md`。将主体、事项、网站、域名、期间和查询方式写入 schema 1.2 `query_scope`，运行 `scope-preview` 供用户确认；未达 `user_confirmed` 不得查询。点击查询控件前先确认其中心点未被浮层或其他链接遮挡；已被遮挡时不得继续坐标点击，只能按该站点当次重新核验的官方查询契约执行一次同域直接导航。
 3. 涉及同名、身份要素或结论措辞时读取 `references/identity-and-wording-rules.md`。
 4. 在授权范围内使用当前 Agent 可用的交互浏览器或用户指定会话。需要现有登录态或遇到登录、会话过期、MFA、验证码、二维码等人工验证时，先读取并严格执行 `references/authenticated-browser-workflow.md`：可复用已有登录态，但密码管理器、密码、Touch ID、验证和登录提交全部由用户本人操作；人工接管期间页面零读取、零截图、零操作。
 5. 截取网页 viewport 或必要的页面矩形，不截取浏览器收藏夹栏、侧边栏、系统桌面或其他无关区域。在临时目录取得原始截图，调用 `scripts/watermark_capture.py` 生成项目唯一留存版。
@@ -86,7 +86,7 @@ description: Conduct authorized Chinese legal public-source verification for com
 
 正文仅保留事项、期间、查询日期、地点、查询人、查询对象、由 Skill 自动写入的有效公司统一社会信用代码或脱敏自然人身份辅助信息、按网站编号的简洁结果、附件说明和查询人员签名栏。自然人的完整身份证号码位置在 Skill 交付前保持空白。不列截图编号、复核人、技术状态标签或内部身份分析。
 
-完整实际网址作为真实超链接；链接目标不改写，显示文字仅加入不可见断行机会，结果段落使用两端对齐和 `w:wordWrap=1`。
+每项查询保存去除查询参数和片段的同域规范结果页网址，并作为正式记录中的真实超链接；主体、期间和其他条件由结构化字段留痕。显示文字仅加入不可见断行机会，结果段落使用两端对齐和 `w:wordWrap=1`。实时浏览器地址中的查询参数只用于当次请求，不写入 schema 1.2、Markdown 或 DOCX。
 
 `no_match_displayed` 必须对应一条 `completed` 执行，证明页面无需登录或已恢复、查询已提交、结果区已加载、出现站点明确零结果信号，并由当前提交周期内查询条件与结果状态同屏可辨的 PNG 水印截图支持。只有自然人 `user_manual_full_id` 查询的结果页仍显示完整号码时，才允许经用户或律师专门目视复核的固定不留截图窄例外。登录页中的“0”、空表格、加载中页面或用户口头表示“已登录”均不构成零结果证据。
 
