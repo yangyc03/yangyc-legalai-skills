@@ -20,6 +20,6 @@ plugins/<plugin-name>/
   - Includes session-only JSON dictionary import and explicit high-confidence format-item confirmation.
   - The candidate is distributed under `plugins/local-redaction-assistant/` and remains subject to maintainer review before being treated as a stable release.
 
-- `legal-network-verification` — `2.0.0-beta`
+- `legal-network-verification` — `2.0.1-beta`
   - Authorized Chinese public-source verification with user-operated authentication handoff, strict zero-result evidence and two-layer workpapers.
   - The same core Skill is intended for Codex, WorkBuddy and other Agents that meet the documented capability requirements.
