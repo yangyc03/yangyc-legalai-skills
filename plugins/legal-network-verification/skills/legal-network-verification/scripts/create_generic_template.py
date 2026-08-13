@@ -210,7 +210,7 @@ def build_template(output: Path) -> None:
         set_run_font(value_run, 12)
 
     table = document.add_table(rows=2, cols=3)
-    headers = ("主体角色", "查询对象", "身份标识（统一社会信用代码/身份证号码（脱敏））")
+    headers = ("主体角色", "查询对象", "统一社会信用代码/身份证号码")
     for cell, value in zip(table.rows[0].cells, headers):
         cell.text = value
         format_table_cell(cell, header=True)

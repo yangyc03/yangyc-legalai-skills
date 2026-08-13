@@ -13,7 +13,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
-from PIL import Image, PngImagePlugin
+from PIL import Image, ImageDraw, PngImagePlugin
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -352,7 +352,11 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         )
         table = Document(next(path for path in paths if path.suffix == ".docx")).tables[0]
         self.assertEqual([row.cells[2].text for row in table.rows[1:3]], ["", ""])
-        self.assertTrue(network_workpaper.artifact_audit(self.root / "user-fill-final")["ok"])
+        self.assertTrue(
+            network_workpaper.artifact_audit(
+                next(path for path in paths if path.suffix == ".docx")
+            )["ok"]
+        )
 
     def test_restricted_and_failed_queries_cannot_claim_no_record(self) -> None:
         for status in ("access_limited", "failed"):
@@ -452,7 +456,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
                 },
             }
         )
-        network_workpaper.validate_run(prepared, formal_mode="final")
+        network_workpaper.validate_run(prepared, formal_mode="draft")
 
         output_root = self.root / "credit-code-flow"
         paths = network_workpaper.build_outputs(
@@ -460,7 +464,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
             workpaper_root=self.root,
             output_dir=output_root,
             template_docx=self.template,
-            formal_mode="final",
+            formal_mode="draft",
             layout="two-layer",
             overwrite=False,
         )
@@ -474,13 +478,13 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         self.assertIn(SYNTHETIC_VALID_CREDIT_CODE, table_text)
 
         contextual_report = network_workpaper.artifact_audit(
-            output_root,
+            docx_path,
             run_data=prepared,
         )
         self.assertTrue(contextual_report["ok"])
         self.assertEqual(contextual_report["validated_company_credit_codes"], 1)
 
-        standalone_report = network_workpaper.artifact_audit(output_root)
+        standalone_report = network_workpaper.artifact_audit(docx_path)
         self.assertFalse(standalone_report["ok"])
         self.assertEqual(standalone_report["validated_company_credit_codes"], 0)
 
@@ -536,7 +540,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         document = Document(manual_docx)
         document.tables[0].cell(1, 2).text = SYNTHETIC_FULL_ID
         document.save(manual_docx)
-        report = network_workpaper.artifact_audit(archive)
+        report = network_workpaper.artifact_audit(manual_docx)
         self.assertFalse(report["ok"])
 
     def test_v13_scope_preview_enforces_confirmed_domain_and_identifier_mode(self) -> None:
@@ -624,16 +628,18 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
             SYNTHETIC_OTHER_VALID_CREDIT_CODE,
             encoding="utf-8",
         )
-        report = network_workpaper.artifact_audit(artifact_root, run_data=audit_run)
+        report = network_workpaper.artifact_audit(
+            artifact_root / "record.md", run_data=audit_run
+        )
         self.assertFalse(report["ok"])
 
         (artifact_root / "record.md").write_text(
             SYNTHETIC_VALID_CREDIT_CODE,
             encoding="utf-8",
         )
-        filename = artifact_root / f"{SYNTHETIC_VALID_CREDIT_CODE}.txt"
+        filename = artifact_root / f"{SYNTHETIC_VALID_CREDIT_CODE}.md"
         filename.write_text("匿名记录", encoding="utf-8")
-        report = network_workpaper.artifact_audit(artifact_root, run_data=audit_run)
+        report = network_workpaper.artifact_audit(filename, run_data=audit_run)
         self.assertFalse(report["ok"])
         self.assertTrue(
             any("filename:" in issue for issue in report["issues"]),
@@ -751,7 +757,9 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         (clean_root / "record.md").write_text("匿名核查记录", encoding="utf-8")
         make_template(clean_root / "record.docx")
         Image.new("RGB", (20, 20), "white").save(clean_root / "record.png")
-        self.assertTrue(network_workpaper.artifact_audit(clean_root)["ok"])
+        for clean_file in sorted(clean_root.iterdir()):
+            with self.subTest(clean_file=clean_file.name):
+                self.assertTrue(network_workpaper.artifact_audit(clean_file)["ok"])
 
         bad_root = self.root / "bad-audit"
         bad_root.mkdir()
@@ -771,9 +779,15 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         Image.new("RGB", (20, 20), "white").save(
             bad_root / "record.jpg", exif=exif
         )
-        report = network_workpaper.artifact_audit(bad_root)
-        self.assertFalse(report["ok"])
-        self.assertGreaterEqual(len(report["issues"]), 4)
+        bad_reports = [
+            network_workpaper.artifact_audit(path)
+            for path in sorted(bad_root.iterdir())
+        ]
+        self.assertTrue(all(not report["ok"] for report in bad_reports))
+        self.assertGreaterEqual(
+            sum(len(report["issues"]) for report in bad_reports),
+            4,
+        )
 
     def test_template_and_audit_reject_sensitive_embedded_image_metadata(self) -> None:
         metadata = PngImagePlugin.PngInfo()
@@ -858,7 +872,11 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
     def test_watermark_preserves_timezone_and_rejects_sensitive_text(self) -> None:
         source = self.root / "source.png"
         output = self.root / "watermarked.png"
-        Image.new("RGB", (640, 360), "white").save(source)
+        source_image = Image.new("RGB", (640, 360), "white")
+        source_draw = ImageDraw.Draw(source_image)
+        source_draw.rectangle((20, 20, 620, 340), outline="black", width=4)
+        source_draw.text((60, 150), "QUERY CONDITIONS / RESULTS", fill="black")
+        source_image.save(source)
         queried_at = watermark_capture.parse_timestamp("2026-07-17T09:10:11+02:00")
         watermark_capture.add_watermark(
             source,
@@ -869,7 +887,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
             queried_at=queried_at,
         )
         with Image.open(output) as image:
-            self.assertEqual(image.info["QueriedAt"], "2026-07-17T09:10:11+02:00")
+            self.assertEqual(image.info["QueriedAt"], "2026-07-17T15:10:11+08:00")
             self.assertEqual(image.info["CaptureKind"], "watermarked_page_only")
 
         with self.assertRaises(ValueError):
@@ -906,7 +924,7 @@ class NetworkWorkpaperV121Tests(unittest.TestCase):
         manifest = json.loads(
             (plugin_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(manifest["version"], "1.3.0-beta")
+        self.assertEqual(manifest["version"], "2.0.0-beta")
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertTrue((plugin_root / "LICENSE").is_file())
         self.assertTrue((plugin_root / "PRIVACY.md").is_file())

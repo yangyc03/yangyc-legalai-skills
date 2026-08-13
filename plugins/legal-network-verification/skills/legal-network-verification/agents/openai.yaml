@@ -1,6 +1,6 @@
 interface:
   display_name: "法律网络核查"
-  short_description: "确认范围后开展公开查询、网页截图及两层网络核查底稿"
-  default_prompt: "Use $legal-network-verification to conduct authorized public-source checks and generate internal Markdown workpapers plus a concise formal network query record."
+  short_description: "含用户登录接管、严格零结果证据门的公开网络核查"
+  default_prompt: "Use $legal-network-verification to conduct authorized public-source checks through existing signed-in browser sessions, pause for user-operated authentication, and generate evidence-linked two-layer workpapers."
 policy:
   allow_implicit_invocation: true
