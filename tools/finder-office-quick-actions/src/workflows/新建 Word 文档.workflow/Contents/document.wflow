@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>534</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>1.0.2</string>
+				<key>AMApplication</key>
+				<array>
+					<string>自动操作</string>
+				</array>
+				<key>AMParameterProperties</key>
+				<dict>
+					<key>source</key>
+					<dict/>
+				</dict>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run AppleScript.action</string>
+				<key>ActionName</key>
+				<string>运行AppleScript</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>source</key>
+					<string>use framework "Foundation"
+use scripting additions
+
+on run {input, parameters}
+	if (count of input) is not 1 then
+		display dialog "请只选择一个目标文件夹。" buttons {"好"} default button "好" with icon caution
+		return input
+	end if
+
+	set outputPath to missing value
+	set temporaryPath to missing value
+	try
+		set targetFolder to item 1 of input as alias
+		set targetPath to POSIX path of targetFolder
+		if my pathIsDirectory(targetPath) is false then error "所选项目不是文件夹，请重新选择。" number 1001
+
+		set supportPath to POSIX path of (path to application support from user domain)
+		set templatePath to supportPath &amp; "FinderOfficeQuickActions/Word中性空白文档.docx"
+		if my pathExists(templatePath) is false then error "未找到 Word 空白模板。请重新运行安装程序，或按安装说明复制模板。" number 1002
+
+		set uuidText to (current application's NSUUID's UUID()'s UUIDString()) as text
+		set temporaryPath to targetPath &amp; ".finder-office-word." &amp; uuidText
+		my copyItemExact(templatePath, temporaryPath)
+
+		set stamp to do shell script "/bin/date '+%Y-%m-%d_%H%M'"
+		set baseName to stamp &amp; "_新建Word文档"
+		set itemIndex to 1
+		repeat
+			if itemIndex is 1 then
+				set outputName to baseName &amp; ".docx"
+			else
+				set outputName to baseName &amp; "_" &amp; my formattedIndex(itemIndex) &amp; ".docx"
+			end if
+			set outputPath to targetPath &amp; outputName
+			if my pathExists(outputPath) is false then
+				try
+					my moveItemExact(temporaryPath, outputPath)
+					exit repeat
+				on error moveMessage number moveNumber
+					if my pathExists(outputPath) is false then error moveMessage number moveNumber
+				end try
+			end if
+			set itemIndex to itemIndex + 1
+		end repeat
+	on error errMsg number errNum
+		if temporaryPath is not missing value then
+			try
+				do shell script "/bin/rm -f " &amp; quoted form of temporaryPath
+			end try
+		end if
+		display dialog "无法创建 Word 文档：" &amp; errMsg buttons {"好"} default button "好" with icon stop
+		return input
+	end try
+
+	try
+		do shell script "/usr/bin/open -b com.microsoft.Word " &amp; quoted form of outputPath
+	on error errMsg number errNum
+		display dialog "Word 文档已经完整创建，但未能用 Microsoft Word 打开：" &amp; errMsg &amp; return &amp; outputPath buttons {"好"} default button "好" with icon caution
+	end try
+	return input
+end run
+
+on pathExists(thePath)
+	try
+		do shell script "/bin/test -e " &amp; quoted form of thePath
+		return true
+	on error
+		return false
+	end try
+end pathExists
+
+on pathIsDirectory(thePath)
+	try
+		do shell script "/bin/test -d " &amp; quoted form of thePath
+		return true
+	on error
+		return false
+	end try
+end pathIsDirectory
+
+on copyItemExact(sourcePath, targetPath)
+	set fileManager to current application's NSFileManager's defaultManager()
+	set {didCopy, copyError} to fileManager's copyItemAtPath:sourcePath toPath:targetPath |error|:(reference)
+	if (didCopy as boolean) is false then error (copyError's localizedDescription() as text) number 1003
+end copyItemExact
+
+on moveItemExact(sourcePath, targetPath)
+	set fileManager to current application's NSFileManager's defaultManager()
+	set {didMove, moveError} to fileManager's moveItemAtPath:sourcePath toPath:targetPath |error|:(reference)
+	if (didMove as boolean) is false then error (moveError's localizedDescription() as text) number 1004
+end moveItemExact
+
+on formattedIndex(itemIndex)
+	if itemIndex &lt; 10 then return "0" &amp; (itemIndex as text)
+	return itemIndex as text
+end formattedIndex</string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.Automator.RunScript</string>
+				<key>CFBundleVersion</key>
+				<string>1.0.2</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunScriptAction</string>
+				<key>InputUUID</key>
+				<string>38153372-4228-44F6-AED1-D0434C1FA054</string>
+				<key>Keywords</key>
+				<array>
+					<string>运行</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>65F68FAF-BB1A-4721-A0B0-E416BC636788</string>
+				<key>UUID</key>
+				<string>44C9841D-1796-4EB6-91B6-F9D3B697612E</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>arguments</key>
+				<dict>
+					<key>0</key>
+					<dict>
+						<key>default value</key>
+						<string>on run {input, parameters}
+
+		(* Your script goes here *)
+
+	return input
+end run</string>
+						<key>name</key>
+						<string>source</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>0</string>
+					</dict>
+				</dict>
+				<key>conversionLabel</key>
+				<integer>0</integer>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+				<key>location</key>
+				<string>309.000000:368.000000</string>
+				<key>nibPath</key>
+				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>applicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>applicationBundleIDsByPath</key>
+		<dict>
+			<key>/System/Library/CoreServices/Finder.app</key>
+			<string>com.apple.finder</string>
+		</dict>
+		<key>applicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>applicationPaths</key>
+		<array>
+			<string>/System/Library/CoreServices/Finder.app</string>
+		</array>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject.folder</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject.folder</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>
