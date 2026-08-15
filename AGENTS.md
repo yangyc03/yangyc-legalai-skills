@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository publishes stable, reusable Agent Skills for Chinese legal workflows. Platform-specific wrappers may improve discovery or installation, but the reusable Skill is the product. This is a public distribution repository, not a development mirror of private systems.
+This repository publishes stable, reusable Agent Skills for Chinese legal workflows and narrowly scoped local productivity tools maintained by the repository owner. Platform-specific wrappers may improve discovery or installation, but the reusable Skill or independently installable tool is the product. This is a public distribution repository, not a development mirror of private systems.
 
 ## Publication boundary
 
@@ -24,11 +24,19 @@ This repository publishes stable, reusable Agent Skills for Chinese legal workfl
 - Group Skills only when they serve one coherent workflow and can share a release lifecycle.
 - Do not add empty plugin directories or speculative components.
 
+## Standalone tool structure
+
+- Put each independently installable non-Agent utility under `tools/<tool-name>/`.
+- Do not fabricate a `SKILL.md` or Codex plugin wrapper for a utility that does not provide Agent behavior.
+- Keep source, build and verification scripts, installation documentation, license, notices and any required neutral assets together in the tool directory.
+- Commit source and neutral assets; publish generated installer archives as release assets unless a tool-specific rule requires otherwise.
+- Document supported platforms, external application dependencies, security permissions, uninstall/recovery behavior and known limitations.
+
 ## Release requirements
 
 - Publish only tested, documented, license-cleared capabilities.
 - State applicable jurisdiction, source requirements, non-use cases, and human-review gates.
 - Run secret, personal-data, local-path, cache, license, and anonymous-test checks before release.
-- Use plugin-specific semantic versions and tags.
+- Use package-specific semantic versions and namespaced tags.
 - Keep public documentation concise and understandable to legal professionals.
 - Do not commit or push without the maintainer's confirmation.
