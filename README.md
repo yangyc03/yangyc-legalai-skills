@@ -47,6 +47,7 @@ tools/
 当前公开工具包括：
 
 - `finder-office-quick-actions`：在 macOS Finder 选中项目的右键“快速操作”中，新建 Word/Excel 文件或将项目移动到桌面。版本和正式发行状态以对应标签与 GitHub Release 为准。
+- `wechat-chat-recording`：在 macOS 本地把授权使用的微信聊天录屏整理为连续截图、可打印 PDF 和可检索 Word 文字稿。默认本地处理，不随发行包提供模型或聊天样本。
 
 ## 公开发布标准
 
